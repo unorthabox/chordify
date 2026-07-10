@@ -13,6 +13,50 @@ page.on('pageerror', (e) => errors.push(e.message));
 await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForSelector('#app');
 
+// --- UI restructure: branding, header buttons, drawer, settings, panel order ---
+const ui = await page.evaluate(() => ({
+  tag: document.querySelector('header .tag').textContent,
+  title: document.title,
+  themeBtnGone: !document.getElementById('themeBtn'),
+  ytKeyBtnGone: !document.getElementById('ytKeyBtn'),
+  rackBeforeCrt: !!(document.getElementById('rack').compareDocumentPosition(document.getElementById('crt')) & Node.DOCUMENT_POSITION_FOLLOWING),
+}));
+ui.tag.includes('Colton.ink') && ui.title.includes('Colton.ink') && !ui.tag.includes('RobCo')
+  ? ok('rebranded to Colton.ink (header + title)') : bad('branding: ' + JSON.stringify([ui.tag, ui.title]));
+ui.themeBtnGone && ui.ytKeyBtnGone ? ok('themeBtn and ytKeyBtn removed from main page') : bad('stale buttons remain');
+ui.rackBeforeCrt ? ok('controls (rack) sit above the grid (crt)') : bad('rack is not before crt');
+
+await page.click('#songsBtn');
+await page.waitForFunction(() => document.getElementById('library').getBoundingClientRect().x > -10, { timeout: 3000 });
+let drawer = await page.evaluate(() => ({
+  open: document.getElementById('library').classList.contains('open'),
+  scrim: getComputedStyle(document.getElementById('libScrim')).display,
+  visible: getComputedStyle(document.getElementById('library')).visibility === 'visible',
+}));
+drawer.open && drawer.scrim === 'block' && drawer.visible ? ok('songs drawer slides in with scrim') : bad('drawer: ' + JSON.stringify(drawer));
+await page.click('#libScrim', { position: { x: 400, y: 300 } });
+await page.waitForTimeout(350);
+drawer = await page.evaluate(() => document.getElementById('library').classList.contains('open'));
+!drawer ? ok('scrim tap closes the drawer') : bad('drawer did not close');
+
+await page.click('#settingsBtn');
+await page.waitForSelector('#settings.open');
+const phosBefore = await page.evaluate(() => document.documentElement.getAttribute('data-phosphor') || 'green');
+await page.click('#stPhosBtn');
+const phosAfter = await page.evaluate(() => document.documentElement.getAttribute('data-phosphor'));
+phosAfter !== phosBefore ? ok(`settings phosphor toggle works (${phosBefore}→${phosAfter})`) : bad('phosphor toggle dead');
+await page.click('#stPhosBtn'); // restore
+await page.fill('#stKeyIn', 'TESTKEY123');
+await page.click('#stKeySave');
+await page.waitForTimeout(200);
+const keyMsg = await page.textContent('#stMsg');
+keyMsg.includes('SAVED') ? ok('settings API key save reports inline') : bad('key save msg: ' + keyMsg);
+await page.fill('#stKeyIn', ''); await page.click('#stKeySave'); // clear again
+await page.keyboard.press('Escape');
+await page.waitForTimeout(150);
+const settingsClosed = await page.evaluate(() => !document.getElementById('settings').classList.contains('open'));
+settingsClosed ? ok('Escape closes settings') : bad('settings stuck open');
+
 // --- performance view -------------------------------------------------------
 await page.click('#viewPerf');
 const cells = await page.locator('#perf .pcell').count();
