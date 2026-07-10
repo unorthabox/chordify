@@ -39,6 +39,8 @@
   border:1px solid var(--scr-line);border-radius:var(--r-sm);padding:10px;font:15px/1.5 var(--mono)}
 #lyrEdit .le-btns{display:flex;gap:8px;align-items:center}
 #lyrEdit .le-btns .sp{flex:1}
+#lyrEdit .le-status{font-family:var(--crt);font-size:14px;min-height:1.2em;color:var(--warn)}
+#lyrEdit .le-status.good{color:var(--good)}
 </style>
 </head>
 <body>
@@ -813,9 +815,12 @@
         <div id="perf"></div>
         <div id="lyrEdit">
           <div class="le-box">
-            <div class="le-head">EDIT LYRICS — ONE LINE PER ROW AS “M:SS | WORDS”. PASTING A YOUTUBE
-              TRANSCRIPT WORKS TOO (TIMESTAMPS ON THEIR OWN LINES ARE FINE).</div>
+            <div class="le-head">EDIT LYRICS — ONE LINE PER ROW AS “M:SS | WORDS”.<br>
+              <span style="color:var(--scr-dim)">TO PASTE FROM YOUTUBE: OPEN THE VIDEO AT YOUTUBE.COM →
+              “…MORE” IN THE DESCRIPTION → SHOW TRANSCRIPT → SELECT + COPY → PASTE HERE.
+              TIMESTAMPS ON THEIR OWN LINES ARE FINE.</span></div>
             <textarea id="lyrTxt" spellcheck="false" placeholder="0:12.5 | We're no strangers to love&#10;0:16.0 | You know the rules and so do I"></textarea>
+            <div class="le-status" id="lyrStatus"></div>
             <div class="le-btns">
               <button class="btn" id="lyrFetchBtn">⇣ Re-fetch</button>
               <span class="sp"></span>
@@ -3091,7 +3096,11 @@ async function loadTranscript(vid){
     const d=await fetchTranscript(vid);
     setStatus('LYRICS RECEIVED — '+d.lines.length+' LINES'+(d.auto?' (AUTO-TRANSCRIBED — TAP ✎ TO FIX MISTAKES)':'')+'.');
   }catch(e){
-    setStatus('NO AUTO-LYRICS ('+((e&&e.message)||'unreachable').toUpperCase()+') — TAP ✎ TO PASTE A TRANSCRIPT.');
+    const why=((e&&e.message)||'unreachable').toUpperCase();
+    setStatus('NO AUTO-LYRICS ('+why+') — TAP ✎ TO PASTE A TRANSCRIPT.');
+    // the status bar scrolls away — leave the note somewhere it stays visible
+    if(vid===yt.videoId) $('ytMsg').textContent='> VIDEO ATTACHED. AUTO-LYRICS FAILED ('+why+') — '+
+      'THE FREE CAPTION MIRRORS COME AND GO. TAP ✎ TO PASTE THE TRANSCRIPT INSTEAD.';
   }
   if(vid!==yt.videoId) return;                          // user attached a different video meanwhile
   lastCapKey=null; lastTrIdx=-2;
@@ -3194,10 +3203,12 @@ function parseLyrText(txt){
   lines.sort((a,b)=>a.t-b.t);
   return lines;
 }
+function lyrNote(msg,good){ const s=$('lyrStatus'); s.textContent=msg; s.classList.toggle('good',!!good); }
 function openLyrEdit(){
   if(!yt.videoId){ setStatus('ATTACH A YOUTUBE VIDEO FIRST — LYRICS ARE STORED PER VIDEO.'); return; }
   const tr=trGet(yt.videoId);
   $('lyrTxt').value=tr?tr.lines.map(l=>fmtTs(l.t)+' | '+l.text).join('\n'):'';
+  lyrNote(tr?'':'NO LYRICS YET — PASTE A TRANSCRIPT (SEE ABOVE), OR TRY ⇣ RE-FETCH.');
   $('lyrEdit').style.display='flex';
   $('lyrTxt').focus();
 }
@@ -3205,7 +3216,7 @@ $('lyrEditBtn').addEventListener('click',openLyrEdit);
 $('lyrCancelBtn').addEventListener('click',()=>{ $('lyrEdit').style.display='none'; });
 $('lyrSaveBtn').addEventListener('click',()=>{
   const lines=parseLyrText($('lyrTxt').value);
-  if(!lines.length){ setStatus('NOTHING TO SAVE — NO PARSEABLE LINES.'); return; }
+  if(!lines.length){ lyrNote('NOTHING TO SAVE — NO PARSEABLE LINES.'); return; }
   trSave(yt.videoId,{lines,auto:false,edited:true});
   $('lyrEdit').style.display='none';
   lastCapKey=null; lastTrIdx=-2;
@@ -3215,11 +3226,16 @@ $('lyrSaveBtn').addEventListener('click',()=>{
 $('lyrFetchBtn').addEventListener('click',async()=>{
   if(!yt.videoId) return;
   const b=$('lyrFetchBtn'); b.textContent='⇣ Fetching…'; b.disabled=true;
+  lyrNote('TRYING '+PIPED_APIS.length+' CAPTION SOURCES…');
   trClear(yt.videoId);
   try{
     const d=await fetchTranscript(yt.videoId);
     $('lyrTxt').value=d.lines.map(l=>fmtTs(l.t)+' | '+l.text).join('\n');
-  }catch(e){ setStatus('FETCH FAILED — '+((e&&e.message)||'UNREACHABLE').toUpperCase()); }
+    lyrNote('FETCHED '+d.lines.length+' LINES'+(d.auto?' (AUTO-TRANSCRIBED)':'')+' — SAVE TO KEEP.',true);
+  }catch(e){
+    lyrNote('FETCH FAILED — '+((e&&e.message)||'UNREACHABLE').toUpperCase()+
+      '. THE FREE MIRRORS ARE FLAKY; PASTING THE TRANSCRIPT ALWAYS WORKS.');
+  }
   b.textContent='⇣ Re-fetch'; b.disabled=false;
 });
 
