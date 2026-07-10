@@ -13,18 +13,37 @@ page.on('pageerror', (e) => errors.push(e.message));
 await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForSelector('#app');
 
-// --- UI restructure: branding, header buttons, drawer, settings, panel order ---
-const ui = await page.evaluate(() => ({
-  tag: document.querySelector('header .tag').textContent,
-  title: document.title,
-  themeBtnGone: !document.getElementById('themeBtn'),
-  ytKeyBtnGone: !document.getElementById('ytKeyBtn'),
-  rackBeforeCrt: !!(document.getElementById('rack').compareDocumentPosition(document.getElementById('crt')) & Node.DOCUMENT_POSITION_FOLLOWING),
-}));
+// --- UI restructure: branding, header buttons, stage order, split view -------
+const ui = await page.evaluate(() => {
+  const before = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const el = id => document.getElementById(id);
+  return {
+    tag: document.querySelector('header .tag').textContent,
+    title: document.title,
+    themeBtnGone: !document.getElementById('themeBtn'),
+    ytKeyBtnGone: !document.getElementById('ytKeyBtn'),
+    inspectorGone: !document.getElementById('inspector'),
+    stageFlowsCorrectly: before(el('ytPanel'), el('nowPlaying')) && before(el('nowPlaying'), el('transport'))
+      && before(el('transport'), el('crt')) && before(el('crt'), el('rack')),
+    togglesInTransport: document.getElementById('transport').contains(document.getElementById('simplifySw'))
+      && document.getElementById('transport').contains(document.getElementById('miniDiagSw')),
+    lyricsDisplay: getComputedStyle(document.getElementById('lyrics')).display,
+    gridDisplay: getComputedStyle(document.getElementById('grid')).display,
+    viewTabsGone: !document.getElementById('viewTabs') && !document.getElementById('viewPerf'),
+  };
+});
 ui.tag.includes('Colton.ink') && ui.title.includes('Colton.ink') && !ui.tag.includes('RobCo')
   ? ok('rebranded to Colton.ink (header + title)') : bad('branding: ' + JSON.stringify([ui.tag, ui.title]));
 ui.themeBtnGone && ui.ytKeyBtnGone ? ok('themeBtn and ytKeyBtn removed from main page') : bad('stale buttons remain');
-ui.rackBeforeCrt ? ok('controls (rack) sit above the grid (crt)') : bad('rack is not before crt');
+ui.inspectorGone ? ok('desktop inspector column removed') : bad('#inspector still present');
+ui.stageFlowsCorrectly ? ok('stage order: search → now playing → controls → split view → rack')
+  : bad('stage order wrong');
+ui.togglesInTransport ? ok('simplify/mini-diagram toggles live in the control board')
+  : bad('display toggles not inside #transport');
+ui.viewTabsGone ? ok('grid/lyrics/perf tabs removed') : bad('leftover view tabs found');
+ui.lyricsDisplay !== 'none' && ui.gridDisplay !== 'none'
+  ? ok('lyrics and chords panes are both visible at once (split screen)')
+  : bad('split view not simultaneous: ' + JSON.stringify({ lyrics: ui.lyricsDisplay, grid: ui.gridDisplay }));
 
 await page.click('#songsBtn');
 await page.waitForFunction(() => document.getElementById('library').getBoundingClientRect().x > -10, { timeout: 3000 });
@@ -57,25 +76,43 @@ await page.waitForTimeout(150);
 const settingsClosed = await page.evaluate(() => !document.getElementById('settings').classList.contains('open'));
 settingsClosed ? ok('Escape closes settings') : bad('settings stuck open');
 
-// --- performance view -------------------------------------------------------
-await page.click('#viewPerf');
-const cells = await page.locator('#perf .pcell').count();
-cells > 0 ? ok(`perf view renders ${cells} big chord cells`) : bad('perf view empty');
-
-const capHint = await page.locator('#perfCap .next').textContent();
-capHint.includes('ATTACH A YOUTUBE VIDEO') ? ok('caption bar shows attach hint when no video') : bad('caption hint missing: ' + capHint);
-
-await page.locator('#perf .pcell').nth(3).click();
-await page.waitForTimeout(300);
-const activeIdx = await page.evaluate(() => {
-  const el = document.querySelector('#perf .pcell.active');
-  return el ? el.dataset.i : null;
+// --- instrument selection persists across reloads, mini diagrams update ------
+await page.evaluate(() => { const li = document.querySelector('#songlist li'); if (li) li.click(); });
+await page.waitForTimeout(200);
+const gtrLines = await page.evaluate(() => {
+  const svg = document.querySelector('#grid .cell svg');
+  return svg ? svg.querySelectorAll('line').length : -1;
 });
-activeIdx === '3' ? ok('tapping a perf cell seeks + highlights it') : bad('active cell after tap: ' + activeIdx);
+await page.click('.inst-tabs .btn[data-inst="uke"]');
+await page.waitForTimeout(200);
+const ukeLinesLive = await page.evaluate(() => {
+  const svg = document.querySelector('#grid .cell svg');
+  return svg ? svg.querySelectorAll('line').length : -1;
+});
+ukeLinesLive !== gtrLines && ukeLinesLive > 0
+  ? ok(`switching to UKE updates mini diagrams live (${gtrLines}→${ukeLinesLive} string lines)`)
+  : bad(`mini diagram did not change on instrument switch: gtr=${gtrLines} uke=${ukeLinesLive}`);
 
-const fontPx = await page.evaluate(() =>
-  parseFloat(getComputedStyle(document.querySelector('#perf .pcell .pname')).fontSize));
-fontPx >= 30 ? ok(`chord name renders at ${fontPx}px (big)`) : bad(`chord font only ${fontPx}px`);
+await page.reload();
+await page.waitForSelector('#app');
+await page.waitForTimeout(200);
+const afterReload = await page.evaluate(() => ({
+  inst: window.CFY.st.inst,
+  lit: document.querySelector('.inst-tabs .btn.lit')?.dataset.inst,
+}));
+afterReload.inst === 'uke' && afterReload.lit === 'uke'
+  ? ok('instrument choice (UKE) persists across a reload')
+  : bad('instrument did not persist: ' + JSON.stringify(afterReload));
+await page.evaluate(() => { const li = document.querySelector('#songlist li'); if (li) li.click(); });
+await page.waitForTimeout(200);
+const ukeLinesAfterReload = await page.evaluate(() => {
+  const svg = document.querySelector('#grid .cell svg');
+  return svg ? svg.querySelectorAll('line').length : -1;
+});
+ukeLinesAfterReload === ukeLinesLive
+  ? ok('mini diagrams render correctly (UKE shapes) after reload — no longer stuck on guitar')
+  : bad(`mini diagram wrong after reload: expected ${ukeLinesLive} got ${ukeLinesAfterReload}`);
+await page.click('.inst-tabs .btn[data-inst="gtr"]'); // restore default for the rest of the run
 
 // --- transcript parsing (pure functions) ------------------------------------
 const parsed = await page.evaluate(() => {
@@ -128,11 +165,23 @@ else {
   fetched.cached ? ok('transcript cached in localStorage') : bad('transcript not cached');
 }
 
-// --- transcript shows in lyrics view + editor round-trip ---------------------
-await page.evaluate(() => { CFY.yt.videoId = 'dQw4w9WgXcQ'; });
-await page.click('#viewLyr');
+// --- transcript shows in the (always-visible) lyrics pane + editor round-trip -
+await page.evaluate(() => { CFY.yt.videoId = 'dQw4w9WgXcQ'; renderLyrics(); });
 const trLines = await page.locator('#lyrics .tr-line').count();
-trLines > 10 ? ok(`lyrics view renders ${trLines} transcript lines`) : bad('transcript lines in lyrics view: ' + trLines);
+trLines > 10 ? ok(`lyrics pane renders ${trLines} transcript lines`) : bad('transcript lines in lyrics pane: ' + trLines);
+
+// --- live-sync current-line highlight, driven by updateLive() ---------------
+const curTest = await page.evaluate(() => {
+  const tr = trGet('dQw4w9WgXcQ');
+  if (!tr || tr.lines.length < 4) return { err: 'no cached transcript to test against' };
+  CFY.yt.player = { getCurrentTime: () => tr.lines[2].t + 0.05 };
+  updateLive();
+  const cur = document.querySelector('#lyrics .tr-line.cur');
+  return { curIdx: cur ? cur.dataset.li : null };
+});
+curTest.err ? bad('cur-line test setup: ' + curTest.err)
+  : curTest.curIdx === '2' ? ok('current-line highlight (.cur) tracks playback position')
+                           : bad('cur line index: ' + curTest.curIdx);
 
 await page.click('#lyrEditBtn');
 await page.waitForSelector('#lyrEdit', { state: 'visible' });
@@ -145,7 +194,26 @@ const after = await page.evaluate(() => trGet('dQw4w9WgXcQ'));
 after.edited && after.lines.length === 2 && after.lines[0].text === 'edited first line'
   ? ok('editor save round-trips (edited flag, 2 lines)') : bad('after save: ' + JSON.stringify(after));
 const shown = await page.locator('#lyrics .tr-line').count();
-shown === 2 ? ok('lyrics view re-rendered with edited lines') : bad('lyrics after edit: ' + shown + ' lines');
+shown === 2 ? ok('lyrics pane re-rendered with edited lines') : bad('lyrics after edit: ' + shown + ' lines');
+
+// --- visible "Fetch Lyrics" button next to the YouTube panel -----------------
+await page.evaluate(() => {
+  CFY.yt.title = 'Oasis - Wonderwall (Official Video)';
+  CFY.yt.videoId = 'bx1Bh8ZvH84';
+  document.getElementById('ytStage').style.display = 'flex';
+});
+await page.click('#ytLyrBtn');
+await page.waitForFunction(
+  () => document.getElementById('ytLyrBtn').textContent !== '⇣ Fetching…',
+  { timeout: 20000 }
+);
+const ytLyrResult = await page.evaluate(() => ({
+  msg: document.getElementById('ytMsg').textContent,
+  lines: document.querySelectorAll('#lyrics .tr-line').length,
+}));
+ytLyrResult.msg.includes('LYRICS') && ytLyrResult.lines > 20
+  ? ok(`⇣ Fetch Lyrics button (next to YouTube search) fetches on demand: ${ytLyrResult.lines} lines`)
+  : bad('ytLyrBtn fetch result: ' + JSON.stringify(ytLyrResult));
 
 // --- search fallback without an API key --------------------------------------
 const search = await page.evaluate(async () => {

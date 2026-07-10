@@ -20,7 +20,10 @@ ok('initial title: ' + JSON.stringify(t0));
 
 // Author ships a new version.
 const html = readFileSync(SITE + '/index.html', 'utf8');
-writeFileSync(SITE + '/index.html', html.replace('<title>Chordify — RobCo Termlink</title>',
+if (!html.includes('<title>Chordify — Colton.ink</title>')) {
+  bad('title replace target not found in index.html — this test is silently a no-op, fix the string');
+}
+writeFileSync(SITE + '/index.html', html.replace('<title>Chordify — Colton.ink</title>',
                                                  '<title>CHORDIFY V2</title>'));
 ok('index.html updated on the "server"');
 
