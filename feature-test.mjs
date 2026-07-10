@@ -78,7 +78,18 @@ const settingsClosed = await page.evaluate(() => !document.getElementById('setti
 settingsClosed ? ok('Escape closes settings') : bad('settings stuck open');
 
 // --- instrument selection persists across reloads, mini diagrams update ------
-await page.evaluate(() => { const li = document.querySelector('#songlist li'); if (li) li.click(); });
+// No bundled song bank ships anymore — synthesize a minimal song directly,
+// same shape a real import would produce, rather than clicking a library row.
+const loadTestSong = () => {
+  st.song = { id: 'test-song', title: 'Test Song', artist: 'Test Artist', bpm: 104, sig: [4, 4], key: 'Am',
+    sections: [['VERSE', [['Am', 4], ['F', 4], ['C', 4], ['G', 4]]]] };
+  st.cells = buildCells(st.song);
+  st.mode = 'synth';
+  $('shTitle').textContent = st.song.title.toUpperCase();
+  $('shArtist').textContent = st.song.artist.toUpperCase();
+  renderGrid();
+};
+await page.evaluate(loadTestSong);
 await page.waitForTimeout(200);
 const gtrLines = await page.evaluate(() => {
   const svg = document.querySelector('#grid .cell svg');
@@ -104,7 +115,7 @@ const afterReload = await page.evaluate(() => ({
 afterReload.inst === 'uke' && afterReload.lit === 'uke'
   ? ok('instrument choice (UKE) persists across a reload')
   : bad('instrument did not persist: ' + JSON.stringify(afterReload));
-await page.evaluate(() => { const li = document.querySelector('#songlist li'); if (li) li.click(); });
+await page.evaluate(loadTestSong);
 await page.waitForTimeout(200);
 const ukeLinesAfterReload = await page.evaluate(() => {
   const svg = document.querySelector('#grid .cell svg');
@@ -217,10 +228,12 @@ ytLyrResult.msg.includes('LYRICS') && ytLyrResult.lines > 20
   : bad('ytLyrBtn fetch result: ' + JSON.stringify(ytLyrResult));
 
 // --- Process Song: auto-scale tempo to the video's real length, one-tap sync -
+await page.evaluate(loadTestSong);
 const process1 = await page.evaluate(async () => {
-  const li = document.querySelector('#songlist li'); if (li) li.click();
+  // 16 beats (the test song) over an 8s span (13s duration − 5s offset) = 120bpm —
+  // chosen to land well inside the [30,300] sanity clamp, not against its floor.
   window.YT = { Player: function (el, opts) {
-    this.getCurrentTime = () => 5; this.getDuration = () => 200; this.setPlaybackRate = () => {};
+    this.getCurrentTime = () => 5; this.getDuration = () => 13; this.setPlaybackRate = () => {};
     setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
   }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
   window.loadYtApi = () => Promise.resolve();
@@ -233,7 +246,7 @@ const process1 = await page.evaluate(async () => {
     shArtistAfterAttach,
     bpm: st.song.bpm,
     offset: CFY.yt.offset,
-    expectedBpm: totalBefore * 60 / (200 - 5),
+    expectedBpm: totalBefore * 60 / (13 - 5),
     ytBpmLcd: document.getElementById('ytBpmLcd').textContent,
   };
 });
@@ -253,6 +266,38 @@ const shArtistAfterDetach = await page.evaluate(() => document.getElementById('s
 shArtistAfterDetach.includes('▶') === false
   ? ok('detaching restores the loaded song\'s own artist line')
   : bad('shArtist after detach: ' + shArtistAfterDetach);
+
+// --- no song bank: attaching a video with nothing loaded replaces the -------
+// "NOW PLAYING - *" placeholder title, and Play works with no chords at all
+const noBank = await page.evaluate(async () => {
+  st.song = null; st.cells = []; st.mode = 'synth';
+  $('shTitle').textContent = 'NOW PLAYING - *';
+  $('shArtist').textContent = 'SEARCH YOUTUBE TO BEGIN, OR IMPORT AUDIO';
+  window.YT = { Player: function (el, opts) {
+    this.getCurrentTime = () => 0; this.getDuration = () => 200; this.setPlaybackRate = () => {};
+    this.playVideo = () => {};
+    setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
+  }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
+  window.loadYtApi = () => Promise.resolve();
+  await ytAttach('vid-no-bank', 'Fresh Video Title', 'Some Channel');
+  await new Promise(r => setTimeout(r, 30));
+  document.getElementById('playBtn').click();
+  await new Promise(r => setTimeout(r, 50));
+  return {
+    songBankEmpty: SONGS.length === 0,
+    libraryNoEntries: document.getElementById('songlist').textContent.includes('NO ENTRIES'),
+    shTitle: document.getElementById('shTitle').textContent,
+    shArtist: document.getElementById('shArtist').textContent,
+    playing: st.playing,
+  };
+});
+noBank.songBankEmpty ? ok('bundled song bank removed (SONGS is empty)') : bad('SONGS still has entries');
+noBank.libraryNoEntries ? ok('empty library shows "NO ENTRIES" with nothing imported') : bad('library not empty as expected');
+noBank.shTitle === 'NOW PLAYING - FRESH VIDEO TITLE'
+  ? ok('"NOW PLAYING - *" placeholder is replaced by the attached video\'s title')
+  : bad('shTitle with no song loaded: ' + noBank.shTitle);
+noBank.shArtist === 'SOME CHANNEL' ? ok('artist line shows the channel when no song is loaded') : bad('shArtist: ' + noBank.shArtist);
+noBank.playing ? ok('▶ PLAY works in YouTube mode with no chord chart loaded at all') : bad('play did not start with no song loaded');
 
 // --- analyzeBuffer exposes phaseSec (used by the mic "Listen for Beat" flow) -
 const beatDetect = await page.evaluate(async () => {

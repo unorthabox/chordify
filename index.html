@@ -765,7 +765,7 @@
           <button class="btn" id="ytFillBtn" title="Use the loaded song’s title">⤺ Title</button>
           <button class="btn" id="ytSearchBtn">Search</button>
         </div>
-        <div id="ytMsg">SEARCH A SONG, THEN SET THE DOWNBEAT — THE CHORD GRID RIDES ALONG WITH THE VIDEO.</div>
+        <div id="ytMsg">SEARCH A VIDEO TO PLAY ALONG WITH LYRICS AND CHORDS — IMPORT AUDIO FIRST IF YOU WANT AN AUTO-DETECTED CHORD CHART.</div>
         <ul id="ytResults"></ul>
         <div id="ytStage">
           <div class="yt-frame"><div id="ytPlayer"></div></div>
@@ -794,8 +794,8 @@
         <div class="songhead" id="songhead">
           <button class="starbtn" id="favBtn" title="Save to setlist">★</button>
           <div>
-            <div class="title" id="shTitle">— NO SIGNAL —</div>
-            <div class="artist" id="shArtist">SELECT A SONG FROM THE BANK</div>
+            <div class="title" id="shTitle">NOW PLAYING - *</div>
+            <div class="artist" id="shArtist">SEARCH YOUTUBE TO BEGIN, OR IMPORT AUDIO</div>
           </div>
           <div class="chips" id="shChips"></div>
         </div>
@@ -1074,77 +1074,10 @@ function fmtTime(sec){
 }
 
 /* ================================================================
-   SONG BANK — [chord, beats] pairs per section
+   SONG BANK — user's own imports/setlists live in st.imported; no
+   bundled demo songs ship with the app.
 ================================================================ */
-const V_RISING=[['Am',3],['C',3],['D',3],['F',3],['Am',3],['C',3],['E7',3],['E7',3],
-                ['Am',3],['C',3],['D',3],['F',3],['Am',3],['E7',3],['Am',3],['E7',3]];
-const CANON_THEME=[['D',4],['A',4],['Bm',4],['F#m',4],['G',4],['D',4],['G',4],['A',4]];
-const BLUES_CH=[['E7',4],['E7',4],['E7',4],['E7',4],['A7',4],['A7',4],['E7',4],['E7',4],
-                ['B7',4],['A7',4],['E7',4],['B7',4]];
-const INT_VERSE=[['Am',4],['F',4],['C',4],['G',4],['Am',4],['F',4],['C',4],['E7',4]];
-const INT_CHOR=[['F',4],['G',4],['Am',4],['Am',4],['F',4],['G',4],['C',4],['E7',4]];
-const SAT_A=[['Fmaj7',4],['Em7',4],['Dm7',4],['Cmaj7',4],['Fmaj7',4],['E7',4],['Am7',4],['G7',4]];
-const AULD_V=[['G',4],['D7',4],['G',4],['C',4],['G',4],['D7',4],['Em',2],['C',2],['G',4]];
-
-const SONGS=[
-  {id:'interstate',title:'Midnight Interstate',artist:'Original · Synthwave',bpm:104,sig:[4,4],key:'Am',
-   sections:[['INTRO',[['Am',4],['F',4],['C',4],['G',4]]],['VERSE 1',INT_VERSE],['CHORUS',INT_CHOR],
-             ['VERSE 2',INT_VERSE],['CHORUS',INT_CHOR],['OUTRO',[['Am',4],['F',4],['Am',8]]]]},
-  {id:'saturn',title:'Saturn Boulevard',artist:'Original · City Pop',bpm:92,sig:[4,4],key:'C',
-   sections:[['SECTION A',SAT_A],
-             ['SECTION B',[['Dm7',4],['Em7',4],['Fmaj7',4],['G7',4],['Dm7',4],['E7',4],['Am7',4],['G7',4]]],
-             ['SECTION A′',SAT_A],['TAG',[['Fmaj7',4],['G7',4],['Cmaj7',8]]]]},
-  {id:'rising',title:'House of the Rising Sun',artist:'Traditional',bpm:80,sig:[3,4],key:'Am',
-   sections:[['INTRO',[['Am',3],['C',3],['D',3],['F',3],['Am',3],['E7',3],['Am',3],['E7',3]]],
-             ['VERSE 1',V_RISING],['VERSE 2',V_RISING],['OUTRO',[['Am',3],['E7',3],['Am',6]]]]},
-  {id:'blues',title:'Neon District Blues',artist:'12-Bar · Key of E',bpm:96,sig:[4,4],key:'E',
-   sections:[['CHORUS 1',BLUES_CH],['CHORUS 2',BLUES_CH],
-             ['TURNAROUND',[['E7',4],['A7',4],['E7',4],['B7',4],['E7',8]]]]},
-  {id:'canon',title:'Canon in Chrome',artist:'after Pachelbel',bpm:66,sig:[4,4],key:'D',
-   sections:[['THEME',CANON_THEME],['VARIATION I',CANON_THEME],['VARIATION II',CANON_THEME],
-             ['CODA',[['G',4],['A',4],['D',8]]]]},
-  {id:'green',title:'Greensleeves',artist:'Traditional',bpm:100,sig:[3,4],key:'Am',
-   sections:[['VERSE',[['Am',3],['C',3],['G',3],['Em',3],['Am',3],['F',3],['E7',3],['E7',3],
-                       ['Am',3],['C',3],['G',3],['Em',3],['Am',3],['E7',3],['Am',3],['Am',3]]],
-             ['CHORUS',[['C',3],['C',3],['G',3],['Em',3],['Am',3],['F',3],['E7',3],['E7',3],
-                        ['C',3],['C',3],['G',3],['Em',3],['Am',3],['E7',3],['Am',3],['Am',3]]]]},
-  {id:'scarborough',title:'Scarborough Fair',artist:'Traditional',bpm:112,sig:[3,4],key:'Am',
-   sections:[['VERSE',[['Am',3],['Am',3],['G',3],['Am',3],['Am',3],['C',3],['D',3],['Am',3],
-                       ['Am',3],['C',3],['Am',3],['G',3],['Am',3],['G',3],['Am',3],['Am',3]]]]},
-  {id:'auld',title:'Auld Lang Syne',artist:'Traditional',bpm:88,sig:[4,4],key:'G',
-   sections:[['VERSE',AULD_V],['CHORUS',AULD_V]]}
-];
-
-/* public-domain lyrics with inline chords (Chords & Lyrics view) */
-const LYRICS={
-  rising:[{name:'VERSE 1',lines:[
-    [[null,'There '],['Am','is a '],['C','house '],['D','in New Or'],['F','leans']],
-    [[null,'they '],['Am','call the '],['E7','Rising '],['Am','Sun'],['E7','']],
-    [[null,'And it has '],['Am','been the '],['C','ruin of '],['D','many a poor '],['F','boy']],
-    [[null,'and '],['Am','God, I '],['E7','know I’m '],['Am','one.']]]}],
-  auld:[{name:'VERSE',lines:[
-    [[null,'Should '],['G','auld acquaintance '],['D7','be forgot, '],[null,'and '],['G','never brought to '],['C','mind?']],
-    [[null,'Should '],['G','auld acquaintance '],['D7','be forgot, '],[null,'and '],['Em','days of '],['C','auld lang '],['G','syne?']]]},
-   {name:'CHORUS',lines:[
-    [[null,'For '],['G','auld lang '],['D7','syne, my dear, '],[null,'for '],['G','auld lang '],['C','syne,']],
-    [[null,'we’ll '],['G','take a cup o’ '],['D7','kindness yet, '],[null,'for '],['Em','days of '],['C','auld lang '],['G','syne.']]]}],
-  green:[{name:'VERSE',lines:[
-    [[null,'A'],['Am','las, my '],['C','love, you '],['G','do me '],['Em','wrong']],
-    [[null,'to '],['Am','cast me '],['F','off dis'],['E7','courteously,']],
-    [[null,'for '],['Am','I have '],['C','loved '],['G','you well and '],['Em','long,']],
-    [[null,'de'],['Am','lighting '],['E7','in your '],['Am','company.']]]},
-   {name:'CHORUS',lines:[
-    [['C','Greensleeves '],[null,'was '],['G','all my '],['Em','joy,']],
-    [['Am','Greensleeves '],[null,'was '],['F','my de'],['E7','light,']],
-    [['C','Greensleeves '],[null,'was my '],['G','heart of '],['Em','gold,']],
-    [[null,'and '],['Am','who but my '],['E7','lady '],['Am','Greensleeves.']]]}],
-  scarborough:[{name:'VERSE',lines:[
-    [['Am','Are you going to '],['G','Scarborough '],['Am','Fair?']],
-    [['C','Parsley, '],['Am','sage, rose'],['D','mary and '],['Am','thyme.']],
-    [[null,'Re'],['Am','member '],['C','me to one who '],['Am','lives '],['G','there,']],
-    [[null,'she '],['Am','once was a '],['G','true love of '],['Am','mine.']]]}]
-};
-SONGS.forEach(s=>{ if(LYRICS[s.id]) s.lyrics=LYRICS[s.id]; });
+const SONGS=[];
 
 /* ================================================================
    GUITAR / UKULELE / PIANO SHAPES
@@ -1348,7 +1281,7 @@ function miniShape(sym){
 function renderGrid(){
   if(!st.song){
     grid.innerHTML='<div class="empty-screen"><div class="big">AWAITING FILE</div>'+
-      '<div class="sm">Select a song from the bank to begin refinement<br>— or import audio ★</div></div>';
+      '<div class="sm">Search YouTube above to play along and follow lyrics<br>— or import audio for auto-detected chords ★</div></div>';
     return;
   }
   const frag=document.createDocumentFragment();
@@ -1590,16 +1523,17 @@ function audioSchedTick(){ // chord-audio overlay on the tape ★
   }
 }
 function play(withCountIn){
-  if(!st.song||st.playing) return;
+  if(st.playing) return;
   if(st.mode==='yt'){
     if(!yt.player||!yt.player.playVideo) return;
     yt.player.playVideo();
     st.playing=true;
     $('playBtn').textContent='❚❚ HOLD';
     $('sigLed').className='led on-amber blink';
-    setStatus('► PLAY-ALONG — '+st.song.title.toUpperCase());
+    setStatus('► PLAY-ALONG — '+(st.song?st.song.title:(yt.title||yt.videoId||'')).toUpperCase());
     return;
   }
+  if(!st.song) return;
   if(!ensureCtx()) return;
   if(ctx.state==='suspended') ctx.resume();
   const cIn=withCountIn&&$('countIn').checked;
@@ -2978,7 +2912,7 @@ async function doYtSearch(){
 }
 async function ytAttach(videoId,title,by){
   const msg=$('ytMsg');
-  if(!st.song){ msg.textContent='> LOAD A SONG FIRST — ITS CHORDS DRIVE THE PLAY-ALONG.'; return; }
+  const hadSong=!!st.song;   // no bundled song bank — a video alone is enough to attach
   pause();
   msg.textContent='> LOADING PLAYER…';
   try{ await loadYtApi(); }
@@ -3009,7 +2943,14 @@ async function ytAttach(videoId,title,by){
   }
   st.mode='yt'; st.pos=0;
   updateChips(); updateYtBpmLcd(); refreshModeHints();
-  $('shArtist').textContent=('▶ '+(title||videoId)+(by?' — '+by:'')).toUpperCase();
+  if(hadSong){
+    // a real song (with its own chords) is already loaded — keep its title,
+    // just note which video is riding along in the artist line
+    $('shArtist').textContent=('▶ '+(title||videoId)+(by?' — '+by:'')).toUpperCase();
+  }else{
+    $('shTitle').textContent=('NOW PLAYING - '+(title||videoId)).toUpperCase();
+    $('shArtist').textContent=(by||'YOUTUBE').toUpperCase();
+  }
   const keep=grid.scrollTop; renderGrid(); grid.scrollTop=keep;
   msg.textContent='> PLAY-ALONG READY. HIT ▶, THEN TAP ⚙ PROCESS SONG ON BEAT ONE.';
   setStatus('YOUTUBE ATTACHED — '+(title||videoId).toUpperCase());
@@ -3421,7 +3362,6 @@ paintThemeBtn();
 renderGrid();
 renderLyrics();
 renderLibrary();
-loadSong(SONGS[0]);
 bootSequence();
 </script>
 <!--/APP-->
