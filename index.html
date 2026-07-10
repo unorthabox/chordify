@@ -3220,7 +3220,7 @@ function cleanQuery(title){
 async function fetchLyricsDB(vid){
   const q=cleanQuery(yt.title||'');
   if(!q) throw new Error('no video title to look up');
-  const ctl=new AbortController(); const to=setTimeout(()=>ctl.abort(),8000);
+  const ctl=new AbortController(); const to=setTimeout(()=>ctl.abort(),15000);
   const r=await fetch('https://lrclib.net/api/search?q='+encodeURIComponent(q),{signal:ctl.signal});
   clearTimeout(to);
   if(!r.ok) throw new Error('lrclib http '+r.status);
