@@ -3086,37 +3086,98 @@ async function fetchTranscript(vid){
   throw lastErr||new Error('no caption source reachable');
 }
 
+/* ── LRCLIB: community lyrics database, timestamped, CORS-open, no key ── */
+function parseLRC(txt){
+  const out=[];
+  txt.split(/\n/).forEach(raw=>{
+    const tags=[...raw.matchAll(/\[(\d+):(\d\d(?:\.\d+)?)\]/g)];
+    if(!tags.length) return;
+    const text=raw.replace(/\[[^\]]*\]/g,'').trim();
+    if(!text) return;
+    tags.forEach(m=>out.push({t:(+m[1])*60+parseFloat(m[2]),text}));
+  });
+  out.sort((a,b)=>a.t-b.t);
+  return out;
+}
+function cleanQuery(title){
+  return (title||'')
+    .replace(/\(([^)]*)\)|\[([^\]]*)\]/g,(m,a,b)=>
+      /official|video|audio|lyric|hd|4k|remaster|visuali|explicit|music/i.test(a||b||'')?' ':m)
+    .replace(/\b(official\s+(music\s+)?video|official\s+audio|lyric\s+video|with\s+lyrics|lyrics|hd|4k)\b/gi,' ')
+    .replace(/\s+/g,' ').trim();
+}
+async function fetchLyricsDB(vid){
+  const q=cleanQuery(yt.title||'');
+  if(!q) throw new Error('no video title to look up');
+  const ctl=new AbortController(); const to=setTimeout(()=>ctl.abort(),8000);
+  const r=await fetch('https://lrclib.net/api/search?q='+encodeURIComponent(q),{signal:ctl.signal});
+  clearTimeout(to);
+  if(!r.ok) throw new Error('lrclib http '+r.status);
+  const list=await r.json();
+  if(!Array.isArray(list)||!list.length) throw new Error('lrclib: no match for “'+q.slice(0,40)+'”');
+  const dur=(yt.player&&yt.player.getDuration&&yt.player.getDuration())||0;
+  const synced=list.filter(x=>x.syncedLyrics);
+  if(synced.length){
+    // entries whose length matches the video are usually synced to that video
+    const best=dur?synced.slice().sort((a,b)=>
+      Math.abs((a.duration||0)-dur)-Math.abs((b.duration||0)-dur))[0]:synced[0];
+    const lines=parseLRC(best.syncedLyrics);
+    if(lines.length){
+      const align=dur&&Math.abs((best.duration||0)-dur)<=4?'video':'track';
+      const data={lines,synced:true,align,auto:false,edited:false,srcName:'LRCLIB'};
+      trSave(vid,data); return data;
+    }
+  }
+  const plain=list.find(x=>x.plainLyrics);
+  if(plain){
+    const lines=plain.plainLyrics.split(/\n/).map(s=>s.trim()).filter(Boolean)
+      .map((text,i)=>({t:i*0.01,text}));
+    const data={lines,synced:false,align:'video',auto:false,edited:false,srcName:'LRCLIB · UNSYNCED'};
+    trSave(vid,data); return data;
+  }
+  throw new Error('lrclib: entry has no lyrics');
+}
+
 async function loadTranscript(vid){
   if(trGet(vid)){
     if(st.view==='lyrics') renderLyrics();
     return;
   }
-  setStatus('FETCHING LYRICS FROM THE VIDEO’S CAPTIONS…');
-  try{
-    const d=await fetchTranscript(vid);
-    setStatus('LYRICS RECEIVED — '+d.lines.length+' LINES'+(d.auto?' (AUTO-TRANSCRIBED — TAP ✎ TO FIX MISTAKES)':'')+'.');
-  }catch(e){
-    const why=((e&&e.message)||'unreachable').toUpperCase();
-    setStatus('NO AUTO-LYRICS ('+why+') — TAP ✎ TO PASTE A TRANSCRIPT.');
-    // the status bar scrolls away — leave the note somewhere it stays visible
-    if(vid===yt.videoId) $('ytMsg').textContent='> VIDEO ATTACHED. AUTO-LYRICS FAILED ('+why+') — '+
-      'THE FREE CAPTION MIRRORS COME AND GO. TAP ✎ TO PASTE THE TRANSCRIPT INSTEAD.';
+  setStatus('LOOKING UP LYRICS…');
+  let d=null, why='';
+  try{ d=await fetchLyricsDB(vid); }                    // lyrics database first — stable, human-synced
+  catch(e1){
+    try{ d=await fetchTranscript(vid); }                // then the video's own captions
+    catch(e2){ why=(((e1&&e1.message)||'')+' · '+((e2&&e2.message)||'')).toUpperCase(); }
   }
   if(vid!==yt.videoId) return;                          // user attached a different video meanwhile
+  if(d){
+    setStatus('LYRICS: '+(d.srcName||'YOUTUBE CAPTIONS')+' — '+d.lines.length+' LINES'+
+      (d.synced===false?' (UNSYNCED)':'')+(d.auto?' (AUTO — TAP ✎ TO FIX MISTAKES)':'')+'.');
+  }else{
+    setStatus('NO AUTO-LYRICS — TAP ✎ TO PASTE A TRANSCRIPT.');
+    // the status bar scrolls away — leave the note somewhere it stays visible
+    $('ytMsg').textContent='> VIDEO ATTACHED. LYRICS LOOKUP FAILED ('+why.slice(0,140)+') — TAP ✎ TO PASTE THEM.';
+  }
   lastCapKey=null; lastTrIdx=-2;
   if(st.view==='lyrics') renderLyrics();
 }
 
 /* ── transcript in the Chords+Lyrics view ── */
 function renderTranscript(box,tr){
-  let h='<div class="lyr-sec">■ YOUTUBE TRANSCRIPT'+(tr.edited?' (EDITED)':tr.auto?' (AUTO)':'')+' — TAP A LINE TO JUMP THE VIDEO</div>';
+  const src=tr.edited?'EDITED':(tr.srcName||'YOUTUBE CAPTIONS')+(tr.auto?' · AUTO':'');
+  const stamped=tr.synced!==false;
+  let h='<div class="lyr-sec">■ LYRICS — '+esc(src)+(stamped?' — TAP A LINE TO JUMP THE VIDEO':'')+'</div>';
   tr.lines.forEach((l,i)=>{
-    h+='<div class="lyr-line tr-line" data-t="'+l.t+'" data-li="'+i+'"><span class="tr-t">'+fmtTime(l.t)+'</span>'+esc(l.text)+'</div>';
+    h+='<div class="lyr-line tr-line" data-t="'+l.t+'" data-li="'+i+'">'+
+      (stamped?'<span class="tr-t">'+fmtTime(l.t)+'</span>':'')+esc(l.text)+'</div>';
   });
   box.innerHTML=h;
   lastTrIdx=-2;
-  box.querySelectorAll('.tr-line').forEach(el=>{
-    el.addEventListener('click',()=>{ if(yt.player&&yt.player.seekTo) yt.player.seekTo(+el.dataset.t,true); });
+  if(stamped) box.querySelectorAll('.tr-line').forEach(el=>{
+    el.addEventListener('click',()=>{
+      if(yt.player&&yt.player.seekTo) yt.player.seekTo(+el.dataset.t+(tr.align==='track'?yt.offset:0),true);
+    });
   });
 }
 
@@ -3155,13 +3216,17 @@ function trIdxFor(t,L){
 }
 function updateLive(){
   const tr=yt.videoId?trGet(yt.videoId):null;
-  const t=yt.player.getCurrentTime()||0;
+  const rawT=yt.player.getCurrentTime()||0;
+  // track-aligned lyrics (studio-length LRC) ride the downbeat offset; video-aligned ones don't
+  const t=tr&&tr.align==='track'?Math.max(0,rawT-yt.offset):rawT;
   if(st.view==='perf'){
     const cap=$('perfCap'); if(!cap) return;
-    if(!tr){
-      if(lastCapKey!=='none'){ lastCapKey='none';
+    if(!tr||tr.synced===false){
+      const note=!tr?'NO LYRICS YET — TAP ✎ TO PASTE A TRANSCRIPT.'
+                    :'LYRICS HAVE NO TIMESTAMPS — READ THEM IN THE ♪ VIEW, OR PASTE A STAMPED TRANSCRIPT VIA ✎.';
+      if(lastCapKey!==note){ lastCapKey=note;
         cap.querySelector('.now').textContent='';
-        cap.querySelector('.next').textContent='NO LYRICS YET — TAP ✎ TO PASTE A TRANSCRIPT.'; }
+        cap.querySelector('.next').textContent=note; }
       return;
     }
     const i=trIdxFor(t,tr.lines);
@@ -3170,7 +3235,7 @@ function updateLive(){
       const nx=tr.lines[i+1];
       cap.querySelector('.next').textContent=nx?nx.text:'';
     }
-  }else if(st.view==='lyrics'&&tr&&!(st.song&&st.song.lyrics)){
+  }else if(st.view==='lyrics'&&tr&&tr.synced!==false&&!(st.song&&st.song.lyrics)){
     const i=trIdxFor(t,tr.lines);
     if(i!==lastTrIdx){ lastTrIdx=i;
       const box=$('lyrics');
@@ -3217,7 +3282,8 @@ $('lyrCancelBtn').addEventListener('click',()=>{ $('lyrEdit').style.display='non
 $('lyrSaveBtn').addEventListener('click',()=>{
   const lines=parseLyrText($('lyrTxt').value);
   if(!lines.length){ lyrNote('NOTHING TO SAVE — NO PARSEABLE LINES.'); return; }
-  trSave(yt.videoId,{lines,auto:false,edited:true});
+  const synced=lines.some(l=>l.t>1.5);   // all-zero stamps = pasted plain text, don't fake a sync
+  trSave(yt.videoId,{lines,synced,align:'video',auto:false,edited:true});
   $('lyrEdit').style.display='none';
   lastCapKey=null; lastTrIdx=-2;
   if(st.view==='lyrics') renderLyrics();
@@ -3226,15 +3292,20 @@ $('lyrSaveBtn').addEventListener('click',()=>{
 $('lyrFetchBtn').addEventListener('click',async()=>{
   if(!yt.videoId) return;
   const b=$('lyrFetchBtn'); b.textContent='⇣ Fetching…'; b.disabled=true;
-  lyrNote('TRYING '+PIPED_APIS.length+' CAPTION SOURCES…');
+  lyrNote('SEARCHING THE LYRICS DATABASE, THEN THE VIDEO’S CAPTIONS…');
   trClear(yt.videoId);
-  try{
-    const d=await fetchTranscript(yt.videoId);
+  let d=null, why='';
+  try{ d=await fetchLyricsDB(yt.videoId); }
+  catch(e1){
+    try{ d=await fetchTranscript(yt.videoId); }
+    catch(e2){ why=(((e1&&e1.message)||'')+' · '+((e2&&e2.message)||'')).toUpperCase(); }
+  }
+  if(d){
     $('lyrTxt').value=d.lines.map(l=>fmtTs(l.t)+' | '+l.text).join('\n');
-    lyrNote('FETCHED '+d.lines.length+' LINES'+(d.auto?' (AUTO-TRANSCRIBED)':'')+' — SAVE TO KEEP.',true);
-  }catch(e){
-    lyrNote('FETCH FAILED — '+((e&&e.message)||'UNREACHABLE').toUpperCase()+
-      '. THE FREE MIRRORS ARE FLAKY; PASTING THE TRANSCRIPT ALWAYS WORKS.');
+    lyrNote((d.srcName||'YOUTUBE CAPTIONS')+' — '+d.lines.length+' LINES'+
+      (d.synced===false?' (NO TIMESTAMPS)':'')+(d.auto?' (AUTO-TRANSCRIBED)':'')+' — SAVE TO KEEP.',true);
+  }else{
+    lyrNote('LOOKUP FAILED — '+why.slice(0,160)+'. PASTING THE TRANSCRIPT ALWAYS WORKS.');
   }
   b.textContent='⇣ Re-fetch'; b.disabled=false;
 });

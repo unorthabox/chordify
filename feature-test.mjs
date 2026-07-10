@@ -50,6 +50,27 @@ parsed.noStamp.length === 2 ? ok('parseLyrText: bare words get sequential stamps
 parsed.ttml.length === 2 && Math.abs(parsed.ttml[0].t - 18.64) < 0.01 && !parsed.ttml.some(l => l.text.includes('['))
   ? ok('parseTTML: timestamps parsed, [Music] filtered, ♪ stripped') : bad('ttml: ' + JSON.stringify(parsed.ttml));
 
+// --- LRCLIB path: title cleaning, LRC parsing, live lookup -------------------
+const lrc = await page.evaluate(async () => {
+  const cleaned = cleanQuery('Oasis - Wonderwall (Official Video) [HD]');
+  const parsed = parseLRC('[00:38.43] Today is gonna be the day\n[00:43.46] And by now\nnoise line\n[01:00.26][02:00.00] repeated line');
+  CFY.yt.title = 'Oasis - Wonderwall (Official Video)';
+  CFY.yt.videoId = 'lrctest';
+  try {
+    const d = await fetchLyricsDB('lrctest');
+    return { cleaned, parsed, n: d.lines.length, synced: d.synced, src: d.srcName, first: d.lines[0] };
+  } catch (e) { return { cleaned, parsed, err: e.message }; }
+});
+lrc.cleaned === 'Oasis - Wonderwall' ? ok('cleanQuery strips video-title noise') : bad('cleanQuery: "' + lrc.cleaned + '"');
+lrc.parsed.length === 4 && lrc.parsed[0].t === 38.43 && lrc.parsed[3].t === 120
+  ? ok('parseLRC: stamps, multi-tag lines, noise skipped') : bad('parseLRC: ' + JSON.stringify(lrc.parsed));
+if (lrc.err) bad('live LRCLIB lookup failed: ' + lrc.err);
+else {
+  lrc.synced && lrc.n > 20 ? ok(`live LRCLIB: ${lrc.n} synced lines via ${lrc.src}, first @${lrc.first.t}s "${lrc.first.text.slice(0, 30)}"`)
+                           : bad('LRCLIB result shape: ' + JSON.stringify({ n: lrc.n, synced: lrc.synced }));
+}
+await page.evaluate(() => { CFY.yt.title = ''; CFY.yt.videoId = null; });
+
 // --- live transcript fetch through the app's own chain ----------------------
 const fetched = await page.evaluate(async () => {
   try {
