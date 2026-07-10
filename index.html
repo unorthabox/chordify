@@ -566,6 +566,7 @@
   ================================================================ */
   .yt-search{display:flex;gap:7px;flex-wrap:wrap}
   #ytQuery{flex:1;min-width:190px}
+  #ytPttBtn{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
   #ytMsg{font-family:var(--crt);font-size:15px;color:var(--phos);margin-top:8px;
     min-height:18px;line-height:1.3}
   #ytMsg a{color:var(--warn)}
@@ -773,6 +774,7 @@
         <h3 class="panel-title">YouTube Play-Along <span style="color:var(--cyan);letter-spacing:0">★</span></h3>
         <div class="yt-search">
           <input id="ytQuery" class="field" type="search" placeholder="Search YouTube — or paste a link…" aria-label="Search YouTube">
+          <button class="btn" id="ytPttBtn" title="Hold to speak your search — bind a hardware key in Settings" aria-label="Hold to speak your search">🎙</button>
           <button class="btn" id="ytFillBtn" title="Use the loaded song’s title">⤺ Title</button>
           <button class="btn" id="ytSearchBtn">Search</button>
         </div>
@@ -962,6 +964,13 @@
         <span class="lbl2">Phosphor tube</span>
         <button class="btn" id="stPhosBtn">Green</button>
       </div>
+      <div class="st-row">
+        <span class="lbl2">Push-to-talk key</span>
+        <button class="btn" id="stPttBtn">Tap to set…</button>
+        <button class="btn" id="stPttClr" title="Clear the binding">✕</button>
+      </div>
+      <div class="st-hint" style="margin-top:-6px">HOLD THE BOUND KEY (OR THE 🎙 BUTTON) TO SPEAK A YOUTUBE SEARCH.
+        WORKS WITH BLUETOOTH PEDALS AND KEYBOARDS — PHONE VOLUME BUTTONS AREN'T REACHABLE FROM A WEB APP.</div>
       <div class="st-row st-col">
         <span class="lbl2">YouTube Data API key</span>
         <div class="st-key">
@@ -2404,6 +2413,7 @@ $('search').addEventListener('input',e=>{st.search=e.target.value;renderLibrary(
 $('favBtn').addEventListener('click',()=>{if(st.song)toggleFav(st.song.id);});
 
 document.addEventListener('keydown',e=>{
+  if(pttKey()&&e.code===pttKey()) return;   // key is bound to push-to-talk — hands off
   if(e.target.closest&&e.target.closest('button')) return;
   if(e.target.tagName==='INPUT'&&e.target.type!=='range') return;
   if(e.code==='Space'){e.preventDefault();st.playing?pause():play(true);}
@@ -3028,6 +3038,96 @@ function setOffset(v){
 }
 $('ytSearchBtn').addEventListener('click',doYtSearch);
 $('ytQuery').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();doYtSearch();} });
+
+/* ── push-to-talk voice search ──
+   Hold the 🎙 button (or a key bound in Settings — Bluetooth pedals and
+   keyboards send plain key events, which is as close to "the phone's buttons"
+   as the web platform allows; volume/side buttons aren't exposed to web apps).
+   Speech goes through the browser's SpeechRecognition — on-device/Siri on iOS. */
+let ptt=null,pttActive=false;
+function pttKey(){ try{return localStorage.getItem('cfy_ptt')||'';}catch(e){return '';} }
+const YTQ_PLACEHOLDER=$('ytQuery').placeholder;
+function pttStart(){
+  if(pttActive) return;
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ setStatus('VOICE SEARCH ISN’T SUPPORTED IN THIS BROWSER — TYPE THE SEARCH INSTEAD.'); return; }
+  pttActive=true;
+  $('ytPttBtn').classList.add('lit');
+  $('ytQuery').value='';
+  $('ytQuery').placeholder='Listening…';
+  ptt=new SR();
+  ptt.lang=navigator.language||'en-US';
+  ptt.interimResults=true;
+  ptt.continuous=true;
+  let finalTxt='';
+  ptt.onresult=ev=>{
+    let interim='';
+    for(let i=ev.resultIndex;i<ev.results.length;i++){
+      const t=ev.results[i][0].transcript;
+      if(ev.results[i].isFinal) finalTxt+=t; else interim+=t;
+    }
+    $('ytQuery').value=(finalTxt+interim).trim();
+  };
+  ptt.onerror=ev=>{
+    if(ev.error==='not-allowed') setStatus('MIC ACCESS DENIED — VOICE SEARCH NEEDS THE MICROPHONE.');
+    else if(ev.error&&ev.error!=='aborted') setStatus('VOICE SEARCH ERROR — '+String(ev.error).toUpperCase()+'.');
+  };
+  ptt.onend=()=>{
+    pttActive=false;
+    $('ytPttBtn').classList.remove('lit');
+    $('ytQuery').placeholder=YTQ_PLACEHOLDER;
+    if($('ytQuery').value.trim()) doYtSearch();
+  };
+  try{ ptt.start(); }
+  catch(e){ pttActive=false; $('ytPttBtn').classList.remove('lit'); $('ytQuery').placeholder=YTQ_PLACEHOLDER; }
+}
+function pttStop(){ if(ptt&&pttActive){ try{ptt.stop();}catch(e){} } }
+(function wirePtt(){
+  const b=$('ytPttBtn');
+  b.addEventListener('pointerdown',e=>{ e.preventDefault(); pttStart(); });
+  b.addEventListener('pointerup',pttStop);
+  b.addEventListener('pointercancel',pttStop);
+  b.addEventListener('contextmenu',e=>e.preventDefault());   // iOS long-press menu
+})();
+/* bound hardware key: hold to talk, release to search */
+document.addEventListener('keydown',e=>{
+  const k=pttKey();
+  if(!k||e.code!==k||e.repeat) return;
+  if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
+  e.preventDefault();
+  pttStart();
+});
+document.addEventListener('keyup',e=>{
+  const k=pttKey();
+  if(k&&e.code===k) pttStop();
+});
+/* settings: rebind / clear the key */
+let pttCapture=false;
+function pttLabel(){ $('stPttBtn').textContent=pttCapture?'Press any key…':(pttKey()||'Tap to set…'); }
+$('stPttBtn').addEventListener('click',()=>{ pttCapture=true; pttLabel(); });
+document.addEventListener('keydown',e=>{
+  if(!pttCapture) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  try{localStorage.setItem('cfy_ptt',e.code);}catch(_){}
+  pttCapture=false; pttLabel();
+},true);   // capture phase so the binding keystroke reaches nothing else
+$('stPttClr').addEventListener('click',()=>{ try{localStorage.removeItem('cfy_ptt');}catch(_){} pttCapture=false; pttLabel(); });
+pttLabel();
+
+/* Ask for the mic once, up front, so the tuner / voice search / listen
+   features don't each hit a cold permission prompt mid-task. The flag is set
+   whatever the answer — no nagging on every load; the browser remembers. */
+async function primePermissions(){
+  try{
+    if(localStorage.getItem('cfy_perm')) return;
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia) return;
+    const s=await navigator.mediaDevices.getUserMedia({audio:true});
+    s.getTracks().forEach(t=>t.stop());
+    setStatus('MIC READY — VOICE SEARCH, TUNER AND LISTEN ARE GOOD TO GO.');
+  }catch(e){ /* denied or unavailable — features will explain when used */ }
+  finally{ try{localStorage.setItem('cfy_perm','1');}catch(_){} }
+}
+primePermissions();
 $('ytFillBtn').addEventListener('click',()=>{
   if(st.song){ $('ytQuery').value=st.song.title+' '+(st.song.artist.split('·')[0]||''); $('ytQuery').focus(); }
 });

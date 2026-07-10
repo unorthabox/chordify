@@ -647,6 +647,85 @@ tunerFade.cleared && tunerFade.cleared.note.startsWith('--') && Math.abs(tunerFa
   ? ok('tuner clears to the dim idle display only after the fade completes')
   : bad('tuner cleared state: ' + JSON.stringify(tunerFade));
 
+// --- 🎙 push-to-talk voice search -----------------------------------------------
+const pttHold = await page.evaluate(async () => {
+  window.SpeechRecognition = function () {
+    window.__pttInst = this;
+    this.start = () => { window.__pttStarted = true; };
+    this.stop = () => { window.__pttStopped = true; if (this.onend) this.onend(); };
+  };
+  window.__origSearch = doYtSearch;
+  doYtSearch = () => { window.__searched = document.getElementById('ytQuery').value; };
+  const btn = document.getElementById('ytPttBtn');
+  btn.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1 }));
+  const litWhileHeld = btn.classList.contains('lit');
+  const listening = document.getElementById('ytQuery').placeholder.includes('Listening');
+  window.__pttInst.onresult({ resultIndex: 0,
+    results: [Object.assign([{ transcript: 'wonderwall oasis' }], { isFinal: true })] });
+  btn.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+  await new Promise(r => setTimeout(r, 20));
+  return { started: !!window.__pttStarted, litWhileHeld, listening,
+           query: document.getElementById('ytQuery').value,
+           searched: window.__searched,
+           litAfter: btn.classList.contains('lit'),
+           placeholderRestored: document.getElementById('ytQuery').placeholder.includes('Search YouTube') };
+});
+pttHold.started && pttHold.litWhileHeld && pttHold.listening
+  ? ok('🎙 hold starts voice recognition with a Listening… placeholder')
+  : bad('ptt hold: ' + JSON.stringify(pttHold));
+pttHold.query === 'wonderwall oasis' && pttHold.searched === 'wonderwall oasis'
+  && !pttHold.litAfter && pttHold.placeholderRestored
+  ? ok('🎙 release fills the query with the transcript and fires the search')
+  : bad('ptt release: ' + JSON.stringify(pttHold));
+
+// bound hardware key drives the same hold-to-talk (Bluetooth pedals/keyboards)
+const pttKeyTest = await page.evaluate(async () => {
+  localStorage.setItem('cfy_ptt', 'KeyV');
+  window.__pttStarted = false; window.__pttStopped = false; window.__searched = null;
+  document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyV' }));
+  const started = window.__pttStarted;
+  window.__pttInst.onresult({ resultIndex: 0,
+    results: [Object.assign([{ transcript: 'hallelujah' }], { isFinal: true })] });
+  document.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyV' }));
+  await new Promise(r => setTimeout(r, 20));
+  return { started, stopped: window.__pttStopped, searched: window.__searched };
+});
+pttKeyTest.started && pttKeyTest.stopped && pttKeyTest.searched === 'hallelujah'
+  ? ok('bound key (KeyV) holds-to-talk and searches on release')
+  : bad('ptt key binding: ' + JSON.stringify(pttKeyTest));
+
+// settings: rebinding captures the next key press
+const pttRebind = await page.evaluate(() => {
+  document.getElementById('stPttBtn').click();
+  const capturing = document.getElementById('stPttBtn').textContent.includes('Press any key');
+  document.dispatchEvent(new KeyboardEvent('keydown', { code: 'F9' }));
+  const bound = localStorage.getItem('cfy_ptt');
+  const label = document.getElementById('stPttBtn').textContent;
+  document.getElementById('stPttClr').click();
+  const cleared = !localStorage.getItem('cfy_ptt');
+  delete window.SpeechRecognition; doYtSearch = window.__origSearch;
+  return { capturing, bound, label, cleared };
+});
+pttRebind.capturing && pttRebind.bound === 'F9' && pttRebind.label === 'F9' && pttRebind.cleared
+  ? ok('settings rebind captures the next key (F9) and ✕ clears the binding')
+  : bad('ptt rebind: ' + JSON.stringify(pttRebind));
+
+// --- mic permission priming on load ------------------------------------------
+const priming = await page.evaluate(async () => {
+  localStorage.removeItem('cfy_perm');
+  const orig = navigator.mediaDevices.getUserMedia;
+  let asked = false;
+  navigator.mediaDevices.getUserMedia = () => { asked = true;
+    return Promise.resolve({ getTracks: () => [{ stop() {} }] }); };
+  await primePermissions();
+  navigator.mediaDevices.getUserMedia = orig;
+  return { asked, flagSet: !!localStorage.getItem('cfy_perm'),
+           status: document.getElementById('statusTxt').textContent };
+});
+priming.asked && priming.flagSet && priming.status.includes('MIC READY')
+  ? ok('permission priming asks for the mic once and reports readiness')
+  : bad('priming: ' + JSON.stringify(priming));
+
 // --- search fallback without an API key --------------------------------------
 const search = await page.evaluate(async () => {
   try { const r = await ytSearch('wonderwall oasis'); return { n: r.length, first: r[0] }; }
