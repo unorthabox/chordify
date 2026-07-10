@@ -7,6 +7,7 @@ const bad = (m) => { fail.push(m); console.log('  FAIL  ' + m); };
 
 const browser = await chromium.launch();
 const page = await (await browser.newContext()).newPage();
+await page.emulateMedia({ reducedMotion: 'reduce' }); // skip the boot typewriter — it races status-text assertions
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 
@@ -214,6 +215,81 @@ const ytLyrResult = await page.evaluate(() => ({
 ytLyrResult.msg.includes('LYRICS') && ytLyrResult.lines > 20
   ? ok(`⇣ Fetch Lyrics button (next to YouTube search) fetches on demand: ${ytLyrResult.lines} lines`)
   : bad('ytLyrBtn fetch result: ' + JSON.stringify(ytLyrResult));
+
+// --- Process Song: auto-scale tempo to the video's real length, one-tap sync -
+const process1 = await page.evaluate(async () => {
+  const li = document.querySelector('#songlist li'); if (li) li.click();
+  window.YT = { Player: function (el, opts) {
+    this.getCurrentTime = () => 5; this.getDuration = () => 200; this.setPlaybackRate = () => {};
+    setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
+  }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
+  window.loadYtApi = () => Promise.resolve();
+  const totalBefore = totalUnits();
+  await ytAttach('vid-process-test', 'Test Video Title', 'Test Channel');
+  await new Promise(r => setTimeout(r, 30));
+  const shArtistAfterAttach = document.getElementById('shArtist').textContent;
+  document.getElementById('ytSyncBtn').click();
+  return {
+    shArtistAfterAttach,
+    bpm: st.song.bpm,
+    offset: CFY.yt.offset,
+    expectedBpm: totalBefore * 60 / (200 - 5),
+    ytBpmLcd: document.getElementById('ytBpmLcd').textContent,
+  };
+});
+process1.shArtistAfterAttach === '▶ TEST VIDEO TITLE — TEST CHANNEL'
+  ? ok('Now Playing artist line updates to the attached YouTube title + channel')
+  : bad('shArtist after attach: ' + process1.shArtistAfterAttach);
+process1.offset === 5 ? ok('⚙ Process Song captures the downbeat tap as offset') : bad('offset: ' + process1.offset);
+Math.abs(process1.bpm - process1.expectedBpm) < 0.01
+  ? ok(`⚙ Process Song auto-scales BPM to fit the video's real length (${process1.bpm.toFixed(1)} bpm)`)
+  : bad(`auto-scale bpm: got ${process1.bpm}, expected ${process1.expectedBpm}`);
+process1.ytBpmLcd === String(Math.round(process1.bpm))
+  ? ok('BPM readout (replacing the old Tap Tempo button) reflects the auto-scaled value')
+  : bad('ytBpmLcd: ' + process1.ytBpmLcd);
+
+await page.evaluate(() => { CFY.yt.player.getCurrentTime = () => 5; ytDetach(false); });
+const shArtistAfterDetach = await page.evaluate(() => document.getElementById('shArtist').textContent);
+shArtistAfterDetach.includes('▶') === false
+  ? ok('detaching restores the loaded song\'s own artist line')
+  : bad('shArtist after detach: ' + shArtistAfterDetach);
+
+// --- analyzeBuffer exposes phaseSec (used by the mic "Listen for Beat" flow) -
+const beatDetect = await page.evaluate(async () => {
+  if (!ensureCtx()) return { err: 'no ctx' };
+  const sr = 22050, dur = 20, bpm = 120, beatSec = 60 / bpm;
+  const buf = ctx.createBuffer(1, sr * dur, sr);
+  const d = buf.getChannelData(0);
+  for (let t = 0.2; t < dur; t += beatSec) {
+    const start = Math.floor(t * sr);
+    for (let i = 0; i < 400; i++) { if (start + i < d.length) d[start + i] += Math.sin(i * 0.5) * Math.exp(-i / 60); }
+  }
+  const result = await analyzeBuffer(buf, () => {});
+  return { bpm: result.bpm, beatSec: result.beatSec, phaseSec: result.phaseSec };
+});
+beatDetect.bpm && Math.abs(beatDetect.bpm - 120) < 6
+  ? ok(`analyzeBuffer detects tempo from a synthetic 120bpm click track (${beatDetect.bpm} bpm)`)
+  : bad('click-track tempo detection: ' + JSON.stringify(beatDetect));
+typeof beatDetect.phaseSec === 'number' && beatDetect.phaseSec >= 0 && beatDetect.phaseSec < beatDetect.beatSec
+  ? ok(`analyzeBuffer exposes a beat phase (${beatDetect.phaseSec.toFixed(3)}s) for downbeat estimation`)
+  : bad('phaseSec out of range: ' + JSON.stringify(beatDetect));
+
+// --- 🎤 Listen for Beat: experimental mic-based tempo/downbeat estimation -----
+const listenDenied = await page.evaluate(async () => {
+  CFY.yt.videoId = 'vid-listen-test';
+  CFY.yt.player = { getCurrentTime: () => 5 };
+  const origGUM = navigator.mediaDevices.getUserMedia;
+  navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
+  document.getElementById('ytListenBtn').click();
+  await new Promise(r => setTimeout(r, 300));
+  const status = document.getElementById('statusTxt').textContent;
+  const btnRestored = document.getElementById('ytListenBtn').textContent.includes('Listen for Beat');
+  navigator.mediaDevices.getUserMedia = origGUM;
+  return { status, btnRestored };
+});
+listenDenied.status.includes('MIC ACCESS DENIED') && listenDenied.btnRestored
+  ? ok('🎤 Listen for Beat degrades gracefully when mic permission is denied')
+  : bad('mic-denial handling: ' + JSON.stringify(listenDenied));
 
 // --- search fallback without an API key --------------------------------------
 const search = await page.evaluate(async () => {

@@ -772,7 +772,8 @@
           <div class="yt-sync">
             <h4>Sync</h4>
             <button class="btn big" id="ytLyrBtn">⇣ Fetch Lyrics</button>
-            <button class="btn big" id="ytSyncBtn">◈ Set Downbeat</button>
+            <button class="btn big" id="ytSyncBtn">⚙ Process Song</button>
+            <button class="btn" id="ytListenBtn" title="Experimental: estimate tempo from the video's actual audio via your microphone">🎤 Listen for Beat (experimental)</button>
             <div class="stepper">
               <button class="btn" id="ytOffDown">−</button>
               <div class="lcd"><span class="lbl">OFFSET s</span><span class="val num" id="ytOffLcd">0.00</span></div>
@@ -780,11 +781,11 @@
             </div>
             <div class="stepper">
               <button class="btn" id="ytBpmDown">−</button>
-              <button class="btn" id="ytTapBtn">⊙ Tap Tempo</button>
+              <div class="lcd"><span class="lbl">BPM</span><span class="val num" id="ytBpmLcd">120</span></div>
               <button class="btn" id="ytBpmUp">+</button>
             </div>
             <button class="btn" id="ytDetachBtn">✕ Detach Video</button>
-            <div class="hint">PLAY THE VIDEO, THEN HIT SET DOWNBEAT ON BEAT ONE. NUDGE THE OFFSET OR THE BPM UNTIL THE GRID LOCKS.</div>
+            <div class="hint">PLAY THE VIDEO, THEN TAP ⚙ PROCESS SONG ON BEAT ONE — IT SETS THE DOWNBEAT AND AUTO-SCALES THE TEMPO TO FIT THE VIDEO'S ACTUAL LENGTH. NUDGE OFFSET/BPM IF IT DRIFTS.</div>
           </div>
         </div>
       </div>
@@ -1306,7 +1307,7 @@ const st={
 };
 function saveSets(){ try{localStorage.setItem('cfy_sets',JSON.stringify(st.setlists));}catch(e){} }
 function esc(x){ return String(x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-const yt={player:null,videoId:null,offset:0,title:'',apiPromise:null};
+const yt={player:null,videoId:null,offset:0,title:'',by:'',apiPromise:null};
 const $=id=>document.getElementById(id);
 const statusTxt=$('statusTxt');
 function setStatus(msg){ statusTxt.textContent=msg; }
@@ -2072,7 +2073,7 @@ async function analyzeBuffer(buf,onProgress){
   const hann=new Float32Array(N);
   for(let i=0;i<N;i++)hann[i]=0.5-0.5*Math.cos(2*Math.PI*i/N);
   const nFrames=Math.max(0,Math.floor((ds.length-N)/HOP));
-  if(!nFrames) return {chords:[['N.C.',+buf.duration.toFixed(2)]],bpm:null,beatSec:null,key:'?'};
+  if(!nFrames) return {chords:[['N.C.',+buf.duration.toFixed(2)]],bpm:null,beatSec:null,phaseSec:null,key:'?'};
 
   const chromas=[], rmsArr=new Float32Array(nFrames), flux=new Float32Array(nFrames);
   const re=new Float32Array(N),im=new Float32Array(N);
@@ -2195,11 +2196,11 @@ async function analyzeBuffer(buf,onProgress){
     merged.shift();
   }
   onProgress(1);
-  if(!merged.length) return {chords:[['N.C.',+dur.toFixed(2)]],bpm:null,beatSec:null,key};
+  if(!merged.length) return {chords:[['N.C.',+dur.toFixed(2)]],bpm:null,beatSec:null,phaseSec:null,key};
   return {
     chords:merged.map(s=>[s.sym,+(s.end-s.start).toFixed(2)]),
     bpm:tempo?+tempo.bpm.toFixed(1):null,
-    beatSec, key
+    beatSec, phaseSec:tempo?tempo.phaseSec:null, key
   };
 }
 let importCount=0;
@@ -2949,7 +2950,7 @@ function ytRenderResults(items){
       '<div class="meta"><div class="t">'+esc(it.title)+'</div><div class="a">'+esc(it.by||'')+'</div></div>';
     const img=li.querySelector('img');
     img.addEventListener('error',()=>img.remove());   // thumbnails blocked? drop them, keep the row
-    const go=()=>ytAttach(it.id,it.title);
+    const go=()=>ytAttach(it.id,it.title,it.by);
     li.addEventListener('click',go);
     li.addEventListener('keydown',e=>{if(e.key==='Enter')go();});
     box.appendChild(li);
@@ -2961,7 +2962,7 @@ async function doYtSearch(){
   const msg=$('ytMsg');
   if(!q) return;
   const direct=parseVideoId(q);
-  if(direct){ ytAttach(direct,'Pasted video'); return; }
+  if(direct){ ytAttach(direct,'Pasted video',''); return; }
   msg.textContent='> SEARCHING YOUTUBE…';
   try{
     const items=await ytSearch(q);
@@ -2975,7 +2976,7 @@ async function doYtSearch(){
     $('ytResults').style.display='none';
   }
 }
-async function ytAttach(videoId,title){
+async function ytAttach(videoId,title,by){
   const msg=$('ytMsg');
   if(!st.song){ msg.textContent='> LOAD A SONG FIRST — ITS CHORDS DRIVE THE PLAY-ALONG.'; return; }
   pause();
@@ -2987,7 +2988,7 @@ async function ytAttach(videoId,title){
   }
   $('ytResults').style.display='none';
   $('ytStage').style.display='flex';
-  yt.videoId=videoId; yt.title=title||'';
+  yt.videoId=videoId; yt.title=title||''; yt.by=by||'';
   yt.offset=ytSyncStore()[ytSyncKey()]||0;
   $('ytOffLcd').textContent=yt.offset.toFixed(2);
   if(yt.player&&yt.player.loadVideoById){
@@ -3007,9 +3008,10 @@ async function ytAttach(videoId,title){
     });
   }
   st.mode='yt'; st.pos=0;
-  updateChips(); refreshModeHints();
+  updateChips(); updateYtBpmLcd(); refreshModeHints();
+  $('shArtist').textContent=('▶ '+(title||videoId)+(by?' — '+by:'')).toUpperCase();
   const keep=grid.scrollTop; renderGrid(); grid.scrollTop=keep;
-  msg.textContent='> PLAY-ALONG READY. HIT ▶, THEN TAP “SET DOWNBEAT” ON BEAT ONE.';
+  msg.textContent='> PLAY-ALONG READY. HIT ▶, THEN TAP ⚙ PROCESS SONG ON BEAT ONE.';
   setStatus('YOUTUBE ATTACHED — '+(title||videoId).toUpperCase());
   // getDuration() reads 0 until the player has actually loaded the video — wait
   // for it (or give up after 3s) so the LRCLIB duration-match isn't fetching blind
@@ -3035,6 +3037,7 @@ function ytDetach(silent){
   if(!silent){
     st.mode=st.song&&st.song.buffer?'audio':'synth';
     st.pos=0; updateChips(); refreshModeHints();
+    if(st.song) $('shArtist').textContent=st.song.artist.toUpperCase();
     const keep=grid.scrollTop; renderGrid(); grid.scrollTop=keep;
     setStatus('YOUTUBE DETACHED.');
   }
@@ -3079,26 +3082,78 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){ libOpen(false); settingsOpen(false); }
 });
 $('ytDetachBtn').addEventListener('click',()=>ytDetach(false));
+function updateYtBpmLcd(){ const el=$('ytBpmLcd'); if(el) el.textContent=Math.round(songBpm()); }
+/* Process Song: capture the downbeat tap as offset, then auto-scale the grid's
+   tempo so its total length exactly spans (video duration − offset). This is
+   the one real lever available without audio access to the YT iframe — it
+   fixes whole-song drift from a wrong/assumed BPM, though it can't correct for
+   the video having a different internal arrangement (e.g. an extra chorus). */
+function autoScaleTempo(){
+  if(!st.song||!yt.player||!yt.player.getDuration) return;
+  const dur=yt.player.getDuration();
+  const span=dur-yt.offset;
+  const total=totalUnits();
+  if(!dur||span<=0||!total) return;
+  st.song.bpm=Math.max(30,Math.min(300,total*60/span));
+  updateChips(); updateYtBpmLcd(); refreshNow(true);
+  setStatus('PROCESSED — BPM SET TO '+Math.round(st.song.bpm)+' TO FIT '+fmtTime(span)+' OF VIDEO FROM THE DOWNBEAT.');
+}
 $('ytSyncBtn').addEventListener('click',()=>{
   if(!yt.player||!yt.player.getCurrentTime) return;
   setOffset(yt.player.getCurrentTime());
-  setStatus('DOWNBEAT SET AT '+fmtTime(yt.offset)+' — GRID NOW FOLLOWS THE VIDEO.');
+  autoScaleTempo();
 });
 $('ytOffDown').addEventListener('click',()=>setOffset(yt.offset-0.1));
 $('ytOffUp').addEventListener('click',()=>setOffset(yt.offset+0.1));
-$('ytBpmDown').addEventListener('click',()=>{ if(st.song){st.song.bpm=Math.max(30,songBpm()-1);updateChips();refreshNow(true);} });
-$('ytBpmUp').addEventListener('click',()=>{ if(st.song){st.song.bpm=Math.min(300,songBpm()+1);updateChips();refreshNow(true);} });
-let taps=[];
-$('ytTapBtn').addEventListener('click',()=>{
-  const now=performance.now();
-  taps=taps.filter(t=>now-t<2500); taps.push(now);
-  if(taps.length>=3){
-    let sum=0;for(let i=1;i<taps.length;i++)sum+=taps[i]-taps[i-1];
-    const bpm=60000/(sum/(taps.length-1));
-    if(st.song&&bpm>40&&bpm<240){ st.song.bpm=+bpm.toFixed(1); updateChips(); refreshNow(true);
-      setStatus('TAP TEMPO → '+Math.round(bpm)+' BPM'); }
-  }else setStatus('TAP TEMPO — KEEP TAPPING ON THE BEAT ('+taps.length+'/3)');
-});
+$('ytBpmDown').addEventListener('click',()=>{ if(st.song){st.song.bpm=Math.max(30,songBpm()-1);updateChips();updateYtBpmLcd();refreshNow(true);} });
+$('ytBpmUp').addEventListener('click',()=>{ if(st.song){st.song.bpm=Math.min(300,songBpm()+1);updateChips();updateYtBpmLcd();refreshNow(true);} });
+
+/* ── experimental: estimate real tempo/downbeat by listening through the mic
+   while the video plays through speakers. Reuses the same FFT onset/tempo
+   estimator as file-import analysis (analyzeBuffer/estimateTempo) — genuine
+   signal analysis, not a static guess — but noise/room-dependent, hence "experimental". */
+async function listenForBeat(){
+  if(!yt.player||!yt.player.getCurrentTime){ setStatus('ATTACH A YOUTUBE VIDEO FIRST.'); return; }
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia||typeof MediaRecorder==='undefined'){
+    setStatus('MIC RECORDING ISN’T SUPPORTED IN THIS BROWSER.'); return;
+  }
+  if(!ensureCtx()) return;
+  const btn=$('ytListenBtn'); const label=btn.textContent;
+  let stream;
+  try{ stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,autoGainControl:false,noiseSuppression:false}}); }
+  catch(e){ setStatus('MIC ACCESS DENIED — CAN’T LISTEN FOR THE BEAT.'); return; }
+  const startedAt=yt.player.getCurrentTime();
+  const rec=new MediaRecorder(stream);
+  const chunks=[];
+  rec.ondataavailable=e=>{ if(e.data&&e.data.size) chunks.push(e.data); };
+  const stopped=new Promise(res=>{ rec.onstop=res; });
+  btn.disabled=true;
+  rec.start();
+  const DUR=15;
+  for(let s=DUR;s>0;s--){ btn.textContent='🎤 Listening… '+s+'s'; await new Promise(r=>setTimeout(r,1000)); }
+  rec.stop();
+  await stopped;
+  stream.getTracks().forEach(t=>t.stop());
+  btn.textContent='🎤 Analyzing…';
+  try{
+    const blob=new Blob(chunks,{type:rec.mimeType||'audio/webm'});
+    const arr=await blob.arrayBuffer();
+    const buf=await ctx.decodeAudioData(arr);
+    const result=await analyzeBuffer(buf,()=>{});
+    if(!result.bpm){
+      setStatus('COULDN’T LOCK A TEMPO FROM THAT LISTEN — TRY SOMEWHERE QUIETER, OR USE ⚙ PROCESS SONG.');
+    }else{
+      st.song.bpm=Math.max(30,Math.min(300,result.bpm));
+      updateChips(); updateYtBpmLcd();
+      setOffset(Math.max(0,startedAt+(result.phaseSec||0)));
+      setStatus('LISTENED IN — '+Math.round(result.bpm)+' BPM, DOWNBEAT SET FROM THE MIC (EXPERIMENTAL).');
+    }
+  }catch(e){
+    setStatus('LISTEN FAILED — '+((e&&e.message)||'COULD NOT ANALYZE THE RECORDING')+'.');
+  }
+  btn.textContent=label; btn.disabled=false;
+}
+$('ytListenBtn').addEventListener('click',listenForBeat);
 
 /* ================================================================
    BOOT
