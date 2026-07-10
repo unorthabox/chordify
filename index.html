@@ -800,7 +800,7 @@
               <button class="btn" id="ytBpmUp" aria-label="BPM up 1">+</button>
             </div>
             <button class="btn" id="ytDetachBtn">✕ Detach Video</button>
-            <div class="hint">TAP ⚙ PROCESS SONG — IT SETS THE TEMPO TO FIT THE VIDEO'S LENGTH SO YOU CAN PLAY RIGHT AWAY. DRAG THE OFFSET WINDOW IF THE SONG STARTS AFTER AN INTRO, OR BPM IF IT DRIFTS (± FOR FINE TUNING).</div>
+            <div class="hint">TAP ⚙ PROCESS SONG — WITH A CHART LOADED IT FITS THE TEMPO TO THE VIDEO'S LENGTH; WITH NO CHART IT AUTO-DETECTS THE CHORDS FROM THE VIDEO'S AUDIO (NEEDS THE LOCAL GRABBER RUNNING). DRAG THE OFFSET WINDOW IF THE SONG STARTS AFTER AN INTRO, OR BPM IF IT DRIFTS (± FOR FINE TUNING).</div>
           </div>
         </div>
       </div>
@@ -2145,19 +2145,24 @@ async function analyzeBuffer(buf,onProgress){
   };
 }
 let importCount=0;
+/* Decode raw audio bytes and run the chord/tempo detector. Shared by the
+   file-import flow and Process Song's auto-chart-from-video flow. */
+async function chartFromAudioBytes(ab,onProgress){
+  if(!ensureCtx()) throw new Error('no audio engine');
+  if(ctx.state==='suspended') await ctx.resume();
+  const buf=await ctx.decodeAudioData(ab);
+  const res=await analyzeBuffer(buf,onProgress||(()=>{}));
+  return {res,buf};
+}
 $('importBtn').addEventListener('click',()=>$('fileInput').click());
 $('fileInput').addEventListener('change',async e=>{
   const file=e.target.files[0]; if(!file) return;
   e.target.value='';
   const status=$('importStatus'),prog=$('importProg'),bar=prog.querySelector('i');
   try{
-    if(!ensureCtx()){status.textContent='> NO AUDIO ENGINE AVAILABLE.';return;}
-    if(ctx.state==='suspended') await ctx.resume();
     status.textContent='> READING TAPE…'; prog.style.display='block'; bar.style.width='2%';
     const ab=await file.arrayBuffer();
-    const buf=await ctx.decodeAudioData(ab);
-    status.textContent='> ANALYZING SIGNAL…';
-    const res=await analyzeBuffer(buf,p=>{
+    const {res,buf}=await chartFromAudioBytes(ab,p=>{
       bar.style.width=Math.round(p*100)+'%';
       status.textContent='> ANALYZING SIGNAL… '+Math.round(p*100)+'%';
     });
@@ -2176,7 +2181,9 @@ $('fileInput').addEventListener('change',async e=>{
     setTimeout(()=>{prog.style.display='none';bar.style.width='0%';},1600);
     renderLibrary(); loadSong(song);
   }catch(err){
-    status.textContent='> ERROR: COULD NOT DECODE AUDIO.';
+    status.textContent=err&&err.message==='no audio engine'
+      ? '> NO AUDIO ENGINE AVAILABLE.'
+      : '> ERROR: COULD NOT DECODE AUDIO.';
     prog.style.display='none';
   }
 });
@@ -3052,20 +3059,84 @@ function autoScaleTempo(){
   updateChips(); updateYtBpmLcd(); refreshNow(true);
   setStatus('PROCESSED — TEMPO SET TO '+Math.round(st.song.bpm)+' BPM TO FIT '+fmtTime(span)+' OF VIDEO. DRAG OFFSET FOR AN INTRO.');
 }
-/* One tap: no need to play to beat one. Assume the song starts with the video
-   (offset 0) and scale the tempo to fit the full duration. waitForDuration
-   covers the case where the button is tapped before the player reports a
-   duration (getDuration() reads 0 until the video has loaded). */
+/* ── auto-chart: with no chart loaded, Process Song downloads the attached
+   video's audio via a local helper (grab-server.mjs, yt-dlp under the hood —
+   straight from YouTube, no mirrors) and runs the same chord/tempo detector
+   as file import. The browser can't fetch YouTube audio itself (no CORS,
+   ciphered streams), hence the companion process. Proof of concept. */
+function grabBase(){ try{return localStorage.getItem('cfy_grab')||'http://127.0.0.1:8934';}catch(e){return 'http://127.0.0.1:8934';} }
+async function autoChartFromVideo(btn){
+  const vid=yt.videoId, title=yt.title, by=yt.by;
+  let health=null;
+  try{
+    const ctl=new AbortController(); const to=setTimeout(()=>ctl.abort(),1500);
+    const r=await fetch(grabBase()+'/health',{signal:ctl.signal}); clearTimeout(to);
+    health=await r.json();
+  }catch(e){}
+  if(!health||!health.ok){
+    setStatus('AUTO-CHART NEEDS THE LOCAL GRABBER — RUN node grab-server.mjs ON YOUR COMPUTER (OR LOAD A CHART FIRST).');
+    return;
+  }
+  btn.textContent='⚙ Downloading…';
+  const resp=await fetch(grabBase()+'/grab?v='+vid);
+  if(!resp.ok) throw new Error('DOWNLOAD FAILED ('+resp.status+')');
+  let ab;
+  if(resp.body&&resp.body.getReader){
+    const reader=resp.body.getReader(); const chunks=[]; let got=0;
+    for(;;){
+      const {done,value}=await reader.read(); if(done) break;
+      chunks.push(value); got+=value.length;
+      btn.textContent='⚙ Downloading… '+(got/1048576).toFixed(1)+' MB';
+    }
+    const all=new Uint8Array(got); let o=0;
+    for(const c of chunks){ all.set(c,o); o+=c.length; }
+    ab=all.buffer;
+  }else{
+    ab=await resp.arrayBuffer();
+  }
+  const {res}=await chartFromAudioBytes(ab,p=>{ btn.textContent='⚙ Analyzing… '+Math.round(p*100)+'%'; });
+  if(!res.bpm){ setStatus('COULDN’T LOCK A TEMPO FROM THE AUDIO — IMPORT A CHART AND TAP ⚙ AGAIN TO FIT IT.'); return; }
+  // Beats-denominated chart (unlike file import's seconds): in play-along mode
+  // curPos() returns beats, so beat units keep the grid in lockstep with the
+  // video. The decoded buffer is discarded — the video is the band.
+  const perBeat=res.bpm/60;
+  const song={
+    id:'imp'+(++importCount),
+    title:title||vid,
+    artist:(by?by+' · ':'')+'AUTO-CHARTED',
+    bpm:res.bpm,sig:[4,4],key:res.key,
+    sections:[['DETECTED SIGNAL',res.chords.map(c=>[c[0],c[1]*perBeat])]],
+  };
+  st.imported.push(song);
+  renderLibrary();
+  loadSong(song);              // note: this detaches the video…
+  await ytAttach(vid,title,by); // …so re-attach it to the new chart
+  setOffset(Math.max(0,res.phaseSec||0));
+  const nSeg=res.chords.filter(c=>c[0]!=='N.C.').length;
+  setStatus('AUTO-CHARTED — '+nSeg+' CHORDS · '+Math.round(res.bpm)+' BPM · KEY '+res.key+'. DRAG OFFSET/BPM TO FINE-TUNE.');
+}
+/* One tap, either way: with a chart loaded, assume the song starts with the
+   video (offset 0) and scale the chart's tempo to fit the full duration —
+   waitForDuration covers a tap before the player reports one. With no chart,
+   auto-chart from the video's actual audio via the local grabber. */
 $('ytSyncBtn').addEventListener('click',async()=>{
   if(!yt.player||!yt.player.getCurrentTime){ setStatus('ATTACH A YOUTUBE VIDEO FIRST.'); return; }
-  if(!st.song){ setStatus('LOAD OR IMPORT A CHORD CHART FIRST — PROCESS SETS ITS TEMPO TO FIT THE VIDEO.'); return; }
   const btn=$('ytSyncBtn'), label=btn.textContent;
   btn.disabled=true; btn.textContent='⚙ Processing…';
-  await waitForDuration(yt.videoId,3000);
-  btn.textContent=label; btn.disabled=false;
-  if(!(yt.player&&yt.player.getDuration&&yt.player.getDuration()>0)){ setStatus('VIDEO STILL LOADING — TRY AGAIN IN A MOMENT.'); return; }
-  setOffset(0);
-  autoScaleTempo();
+  try{
+    if(!st.song){
+      await autoChartFromVideo(btn);
+      return;
+    }
+    await waitForDuration(yt.videoId,3000);
+    if(!(yt.player&&yt.player.getDuration&&yt.player.getDuration()>0)){ setStatus('VIDEO STILL LOADING — TRY AGAIN IN A MOMENT.'); return; }
+    setOffset(0);
+    autoScaleTempo();
+  }catch(e){
+    setStatus('AUTO-CHART FAILED — '+((e&&e.message)||'COULD NOT ANALYZE THE AUDIO')+'.');
+  }finally{
+    btn.textContent=label; btn.disabled=false;
+  }
 });
 $('ytOffDown').addEventListener('click',()=>setOffset(yt.offset-0.1));
 $('ytOffUp').addEventListener('click',()=>setOffset(yt.offset+0.1));

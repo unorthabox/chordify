@@ -296,32 +296,40 @@ Math.abs(processWait.bpm - processWait.expected) < 0.01
   ? ok('⚙ Process Song waits for the duration when tapped early, then scales correctly')
   : bad(`waitForDuration path: got ${processWait.bpm}, expected ${processWait.expected}`);
 
-// Guards: no video attached, and no chart loaded, both give a helpful status
+// Guards: no video attached → helpful status; no chart loaded + grabber down →
+// auto-chart degrades gracefully with instructions and creates no song.
 const processGuards = await page.evaluate(async () => {
   ytDetach(true);
   document.getElementById('ytSyncBtn').click();
   await new Promise(r => setTimeout(r, 20));
   const noVideo = document.getElementById('statusTxt').textContent;
-  // now attach a video but clear the chart
+  // now attach a video but clear the chart, with the grabber unreachable
   window.YT = { Player: function (el, opts) {
     this.getCurrentTime = () => 0; this.getDuration = () => 100; this.setPlaybackRate = () => {};
     setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
   }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
   window.loadYtApi = () => Promise.resolve();
-  await ytAttach('vid-guard', 'Guard Video', 'Chan');
+  await ytAttach('vid-guard0000', 'Guard Video', 'Chan');
   await new Promise(r => setTimeout(r, 30));
   st.song = null; st.cells = [];
+  const origFetch = window.fetch;
+  window.fetch = (u, o) => String(u).includes(':8934')
+    ? Promise.reject(new TypeError('connection refused'))
+    : origFetch(u, o);
   document.getElementById('ytSyncBtn').click();
-  await new Promise(r => setTimeout(r, 60));
+  for (let i = 0; i < 40 && document.getElementById('ytSyncBtn').disabled; i++)
+    await new Promise(r => setTimeout(r, 50));
+  window.fetch = origFetch;
   const noChart = document.getElementById('statusTxt').textContent;
-  return { noVideo, noChart };
+  return { noVideo, noChart, noSongCreated: !st.song,
+           btnRestored: document.getElementById('ytSyncBtn').textContent.includes('Process Song') };
 });
 processGuards.noVideo.includes('ATTACH A YOUTUBE VIDEO')
   ? ok('⚙ Process Song with no video attached asks the user to attach one')
   : bad('no-video guard status: ' + processGuards.noVideo);
-processGuards.noChart.includes('CHORD CHART FIRST')
-  ? ok('⚙ Process Song with no chart loaded asks the user to load one')
-  : bad('no-chart guard status: ' + processGuards.noChart);
+processGuards.noChart.includes('LOCAL GRABBER') && processGuards.noSongCreated && processGuards.btnRestored
+  ? ok('⚙ Process Song auto-chart degrades gracefully when the local grabber is down')
+  : bad('grabber-down fallback: ' + JSON.stringify(processGuards));
 await page.evaluate(loadTestSong);   // restore a chart for the drag tests below
 
 // --- Drag-to-adjust the OFFSET / BPM readout windows -------------------------
@@ -374,6 +382,76 @@ dragBpm.threw === false
   ? ok('dragging BPM with no chart loaded is a safe no-op (no crash)')
   : bad('bpm drag threw with st.song null');
 
+// --- auto-chart end-to-end: Process Song with no chart downloads (stubbed) ----
+// audio and builds a detected chord chart. The grabber fetch is stubbed with an
+// in-page WAV click track at 120bpm; REAL decodeAudioData + analyzeBuffer run.
+await page.evaluate(async () => {
+  st.song = null; st.cells = [];
+  window.YT = { Player: function (el, opts) {
+    this.getCurrentTime = () => 0; this.getDuration = () => 20; this.setPlaybackRate = () => {};
+    setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
+  }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
+  window.loadYtApi = () => Promise.resolve();
+  await ytAttach('vid-autochart', 'Auto Chart Video', 'Auto Channel');
+  await new Promise(r => setTimeout(r, 30));
+  // 20s mono 16-bit WAV, clicks every 0.5s (120bpm) from t=0.2
+  const sr = 22050, dur = 20, n = sr * dur;
+  const pcm = new Int16Array(n);
+  for (let t = 0.2; t < dur; t += 0.5) {
+    const start = Math.floor(t * sr);
+    for (let i = 0; i < 400 && start + i < n; i++)
+      pcm[start + i] += Math.round(Math.sin(i * 0.5) * Math.exp(-i / 60) * 20000);
+  }
+  const wav = new ArrayBuffer(44 + pcm.length * 2);
+  const dv = new DataView(wav);
+  const wstr = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+  wstr(0, 'RIFF'); dv.setUint32(4, 36 + pcm.length * 2, true); wstr(8, 'WAVE');
+  wstr(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  wstr(36, 'data'); dv.setUint32(40, pcm.length * 2, true);
+  new Int16Array(wav, 44).set(pcm);
+  window.__origFetchAC = window.fetch;
+  window.fetch = (u, o) => {
+    const s = String(u);
+    if (s.includes(':8934/health')) return Promise.resolve({ ok: true, json: async () => ({ ok: true, ytdlp: 'stub' }) });
+    if (s.includes(':8934/grab')) return Promise.resolve({ ok: true, arrayBuffer: async () => wav });
+    return window.__origFetchAC(u, o);
+  };
+  document.getElementById('ytSyncBtn').click();
+});
+await page.evaluate(async () => {
+  for (let i = 0; i < 600 && document.getElementById('ytSyncBtn').disabled; i++)
+    await new Promise(r => setTimeout(r, 100));
+});
+const autoChart = await page.evaluate(() => {
+  window.fetch = window.__origFetchAC;
+  return {
+    hasSong: !!st.song,
+    artist: st.song ? st.song.artist : null,
+    bpm: st.song ? st.song.bpm : null,
+    totalBeats: totalUnits(),
+    offset: CFY.yt.offset,
+    videoId: CFY.yt.videoId,
+    status: document.getElementById('statusTxt').textContent,
+    inLibrary: st.imported.some(s => s.artist && s.artist.includes('AUTO-CHARTED')),
+  };
+});
+autoChart.hasSong && autoChart.artist && autoChart.artist.includes('AUTO-CHARTED')
+  ? ok('⚙ Process Song with no chart auto-builds a detected chart from the video audio')
+  : bad('auto-chart song: ' + JSON.stringify(autoChart));
+autoChart.bpm && Math.abs(autoChart.bpm - 120) < 6
+  ? ok(`auto-chart detects the real tempo (${autoChart.bpm} bpm from a 120bpm click track)`)
+  : bad('auto-chart bpm: ' + autoChart.bpm);
+autoChart.totalBeats / 20 > 1.5
+  ? ok(`auto-chart cells are beats-denominated (${autoChart.totalBeats.toFixed(1)} beats over 20s of audio)`)
+  : bad('cells look seconds-denominated: totalUnits=' + autoChart.totalBeats);
+autoChart.offset >= 0 && autoChart.offset < 0.6 && autoChart.videoId === 'vid-autochart'
+  ? ok(`auto-chart re-attaches the video and sets the downbeat offset (${autoChart.offset}s)`)
+  : bad('offset/videoId: ' + autoChart.offset + ' / ' + autoChart.videoId);
+autoChart.status.includes('AUTO-CHARTED') && autoChart.inLibrary
+  ? ok('auto-charted song lands in the library with a summary status')
+  : bad('status/library: ' + JSON.stringify(autoChart));
+
 await page.evaluate(() => { CFY.yt.player.getCurrentTime = () => 5; ytDetach(false); });
 const shArtistAfterDetach = await page.evaluate(() => document.getElementById('shArtist').textContent);
 shArtistAfterDetach.includes('▶') === false
@@ -384,6 +462,7 @@ shArtistAfterDetach.includes('▶') === false
 // "NOW PLAYING - *" placeholder title, and Play works with no chords at all
 const noBank = await page.evaluate(async () => {
   st.song = null; st.cells = []; st.mode = 'synth';
+  st.imported = []; renderLibrary();   // drop the auto-charted song from the e2e test above
   $('shTitle').textContent = 'NOW PLAYING - *';
   $('shArtist').textContent = 'SEARCH YOUTUBE TO BEGIN, OR IMPORT AUDIO';
   window.YT = { Player: function (el, opts) {
