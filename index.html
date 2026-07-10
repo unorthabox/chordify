@@ -795,7 +795,6 @@
           <div class="yt-sync">
             <h4>Sync</h4>
             <div id="crtStatus"><span id="statusTxt">SYSTEM READY.</span> <span class="cursor"></span></div>
-            <button class="btn big" id="ytLyrBtn">⇣ Fetch Lyrics</button>
             <button class="btn big" id="ytSyncBtn">⚙ Process Song</button>
             <div class="stepper">
               <button class="btn" id="ytOffDown" aria-label="Offset down 0.1s">−</button>
@@ -808,7 +807,7 @@
               <button class="btn" id="ytBpmUp" aria-label="BPM up 1">+</button>
             </div>
             <button class="btn" id="ytDetachBtn">✕ Detach Video</button>
-            <div class="hint">TAP ⚙ PROCESS SONG — WITH A CHART LOADED IT FITS THE TEMPO TO THE VIDEO'S LENGTH; WITH NO CHART IT AUTO-DETECTS THE CHORDS FROM THE VIDEO'S AUDIO (NEEDS THE LOCAL GRABBER RUNNING). DRAG THE OFFSET WINDOW IF THE SONG STARTS AFTER AN INTRO, OR BPM IF IT DRIFTS (± FOR FINE TUNING).</div>
+            <div class="hint">TAP ⚙ PROCESS SONG — IT BUILDS/FITS THE CHORD CHART AND FETCHES THE LYRICS, THEN YOU PLAY. (AUTO-DETECTING CHORDS NEEDS THE GRABBER — SEE ⚙ SETTINGS.) DRAG THE OFFSET WINDOW IF THE SONG STARTS AFTER AN INTRO, OR BPM IF IT DRIFTS (± FOR FINE TUNING). LYRICS WRONG? TAP ✎ IN THE LYRICS PANE.</div>
           </div>
         </div>
       </div>
@@ -974,6 +973,16 @@
       </div>
       <div class="st-hint" style="margin-top:-6px">HOLD THE BOUND KEY (OR THE 🎙 BUTTON) TO SPEAK A YOUTUBE SEARCH.
         WORKS WITH BLUETOOTH PEDALS AND KEYBOARDS — PHONE VOLUME BUTTONS AREN'T REACHABLE FROM A WEB APP.</div>
+      <div class="st-row st-col">
+        <span class="lbl2">Audio grabber URL</span>
+        <div class="st-key">
+          <input id="stGrabIn" class="field" type="url" placeholder="blank = this computer (127.0.0.1:8934)" autocomplete="off">
+          <button class="btn" id="stGrabSave">Save</button>
+        </div>
+        <div class="st-hint">FOR AUTO-CHART ON THE PHONE: ON YOUR COMPUTER RUN
+          <b>node grab-server.mjs --tunnel</b> AND PASTE THE https URL IT PRINTS. LEAVE BLANK ON DESKTOP.</div>
+        <div id="stGrabMsg"></div>
+      </div>
       <div class="st-row st-col">
         <span class="lbl2">YouTube Data API key</span>
         <div class="st-key">
@@ -3203,8 +3212,9 @@ $('songlist').addEventListener('click',()=>libOpen(false));   // picking a song 
 function settingsOpen(open){
   $('settings').classList.toggle('open',open);
   if(open){
-    $('stMsg').textContent='';
+    $('stMsg').textContent=''; $('stGrabMsg').textContent='';
     ytKeyLoad().then(k=>{ $('stKeyIn').value=k||''; }).catch(()=>{});
+    try{ $('stGrabIn').value=localStorage.getItem('cfy_grab')||''; }catch(e){}
   }
 }
 $('settingsBtn').addEventListener('click',()=>settingsOpen(true));
@@ -3214,6 +3224,14 @@ $('stKeySave').addEventListener('click',async()=>{
   const k=$('stKeyIn').value.trim();
   try{ await ytKeySave(k); }catch(e){ $('stMsg').textContent='COULD NOT SAVE: '+e.message; return; }
   $('stMsg').textContent=k?'KEY SAVED — SEARCH USES THE OFFICIAL YOUTUBE API.':'KEY CLEARED — SEARCH USES THE FREE MIRRORS.';
+});
+$('stGrabSave').addEventListener('click',()=>{
+  const u=$('stGrabIn').value.trim().replace(/\/+$/,'');
+  try{
+    if(u) localStorage.setItem('cfy_grab',u); else localStorage.removeItem('cfy_grab');
+    $('stGrabIn').value=u;
+    $('stGrabMsg').textContent=u?'GRABBER URL SAVED — AUTO-CHART USES IT ON THIS DEVICE.':'CLEARED — USING THIS COMPUTER (127.0.0.1:8934).';
+  }catch(e){ $('stGrabMsg').textContent='COULD NOT SAVE: '+e.message; }
 });
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){ libOpen(false); settingsOpen(false); }
@@ -3264,7 +3282,7 @@ async function autoChartFromVideo(btn){
     health=await r.json();
   }catch(e){}
   if(!health||!health.ok){
-    setStatus('AUTO-CHART NEEDS THE LOCAL GRABBER — RUN node grab-server.mjs ON YOUR COMPUTER (OR LOAD A CHART FIRST).');
+    setStatus('AUTO-CHART NEEDS THE GRABBER — ON YOUR COMPUTER RUN node grab-server.mjs (ADD --tunnel FOR PHONE USE) AND SET ITS URL IN ⚙ SETTINGS.');
     return;
   }
   btn.textContent='⚙ Downloading…';
@@ -3315,14 +3333,18 @@ $('ytSyncBtn').addEventListener('click',async()=>{
   const btn=$('ytSyncBtn'), label=btn.textContent;
   btn.disabled=true; btn.textContent='⚙ Processing…';
   try{
+    // one button does it all: if lyrics aren't in yet, fetch them alongside
+    // the chart work (▶ PLAY stays usable while the button is busy)
+    const lyrP=!trGet(yt.videoId)?refetchLyrics(null):null;
     if(!st.song){
       await autoChartFromVideo(btn);
-      return;
+    }else{
+      await waitForDuration(yt.videoId,3000);
+      if(!(yt.player&&yt.player.getDuration&&yt.player.getDuration()>0)){ setStatus('VIDEO STILL LOADING — TRY AGAIN IN A MOMENT.'); return; }
+      setOffset(0);
+      autoScaleTempo();
     }
-    await waitForDuration(yt.videoId,3000);
-    if(!(yt.player&&yt.player.getDuration&&yt.player.getDuration()>0)){ setStatus('VIDEO STILL LOADING — TRY AGAIN IN A MOMENT.'); return; }
-    setOffset(0);
-    autoScaleTempo();
+    if(lyrP){ btn.textContent='⚙ Fetching lyrics…'; await lyrP; }
   }catch(e){
     setStatus('AUTO-CHART FAILED — '+((e&&e.message)||'COULD NOT ANALYZE THE AUDIO')+'.');
   }finally{
@@ -3594,8 +3616,8 @@ $('lyrSaveBtn').addEventListener('click',()=>{
 });
 async function refetchLyrics(btn){
   if(!yt.videoId) return;
-  const label=btn.textContent;
-  btn.textContent='⇣ Fetching…'; btn.disabled=true;
+  const label=btn&&btn.textContent;
+  if(btn){ btn.textContent='⇣ Fetching…'; btn.disabled=true; }
   const editorOpen=$('lyrEdit').style.display==='flex';
   if(editorOpen) lyrNote('SEARCHING THE LYRICS DATABASE, THEN THE VIDEO’S CAPTIONS…');
   else $('ytMsg').textContent='> SEARCHING THE LYRICS DATABASE, THEN THE VIDEO’S CAPTIONS…';
@@ -3620,10 +3642,9 @@ async function refetchLyrics(btn){
     if(editorOpen) lyrNote(msg);
     $('ytMsg').textContent='> LYRICS LOOKUP FAILED — TAP ✎ TO PASTE THEM.';
   }
-  btn.textContent=label; btn.disabled=false;
+  if(btn){ btn.textContent=label; btn.disabled=false; }
 }
 $('lyrFetchBtn').addEventListener('click',()=>refetchLyrics($('lyrFetchBtn')));
-$('ytLyrBtn').addEventListener('click',()=>refetchLyrics($('ytLyrBtn')));
 
 window.CFY={st,yt};   // inspection handle
 try{ const ph=localStorage.getItem('cfy_phosphor'); if(ph==='amber') document.documentElement.setAttribute('data-phosphor','amber'); }catch(e){}

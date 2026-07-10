@@ -218,23 +218,19 @@ const shown = await page.locator('#lyrics .tr-line').count();
 shown === 2 ? ok('lyrics pane re-rendered with edited lines') : bad('lyrics after edit: ' + shown + ' lines');
 
 // --- visible "Fetch Lyrics" button next to the YouTube panel -----------------
-await page.evaluate(() => {
+const ytLyrResult = await page.evaluate(async () => {
   CFY.yt.title = 'Oasis - Wonderwall (Official Video)';
   CFY.yt.videoId = 'bx1Bh8ZvH84';
   document.getElementById('ytStage').style.display = 'flex';
+  await refetchLyrics(null);   // btn-optional: this is how ⚙ Process Song calls it
+  return {
+    msg: document.getElementById('ytMsg').textContent,
+    lines: document.querySelectorAll('#lyrics .tr-line').length,
+  };
 });
-await page.click('#ytLyrBtn');
-await page.waitForFunction(
-  () => document.getElementById('ytLyrBtn').textContent !== '⇣ Fetching…',
-  { timeout: 20000 }
-);
-const ytLyrResult = await page.evaluate(() => ({
-  msg: document.getElementById('ytMsg').textContent,
-  lines: document.querySelectorAll('#lyrics .tr-line').length,
-}));
 ytLyrResult.msg.includes('LYRICS') && ytLyrResult.lines > 20
-  ? ok(`⇣ Fetch Lyrics button (next to YouTube search) fetches on demand: ${ytLyrResult.lines} lines`)
-  : bad('ytLyrBtn fetch result: ' + JSON.stringify(ytLyrResult));
+  ? ok(`lyrics fetch (folded into ⚙ Process Song) pulls on demand: ${ytLyrResult.lines} lines`)
+  : bad('refetchLyrics(null) result: ' + JSON.stringify(ytLyrResult));
 
 // --- Process Song: ONE TAP → offset 0 + auto-scale tempo to the video's length
 await page.evaluate(loadTestSong);
@@ -247,6 +243,7 @@ const process1 = await page.evaluate(async () => {
     setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
   }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
   window.loadYtApi = () => Promise.resolve();
+  trSave('vid-process-test', { lines: [{ t: 0, text: 'seed' }] });   // keep Process Song's lyric fetch off the network
   const totalBefore = totalUnits();
   await ytAttach('vid-process-test', 'Test Video Title', 'Test Channel');
   await new Promise(r => setTimeout(r, 30));
@@ -285,6 +282,7 @@ const processWait = await page.evaluate(async () => {
     setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
   }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
   window.loadYtApi = () => Promise.resolve();
+  trSave('vid-wait-test', { lines: [{ t: 0, text: 'seed' }] });
   const total = totalUnits();
   await ytAttach('vid-wait-test', 'Wait Video', 'Chan');
   await new Promise(r => setTimeout(r, 30));
@@ -309,6 +307,7 @@ const processGuards = await page.evaluate(async () => {
     setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
   }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
   window.loadYtApi = () => Promise.resolve();
+  trSave('vid-guard0000', { lines: [{ t: 0, text: 'seed' }] });
   await ytAttach('vid-guard0000', 'Guard Video', 'Chan');
   await new Promise(r => setTimeout(r, 30));
   st.song = null; st.cells = [];
@@ -327,9 +326,37 @@ const processGuards = await page.evaluate(async () => {
 processGuards.noVideo.includes('ATTACH A YOUTUBE VIDEO')
   ? ok('⚙ Process Song with no video attached asks the user to attach one')
   : bad('no-video guard status: ' + processGuards.noVideo);
-processGuards.noChart.includes('LOCAL GRABBER') && processGuards.noSongCreated && processGuards.btnRestored
-  ? ok('⚙ Process Song auto-chart degrades gracefully when the local grabber is down')
+processGuards.noChart.includes('GRABBER') && processGuards.noChart.includes('SETTINGS')
+  && processGuards.noSongCreated && processGuards.btnRestored
+  ? ok('⚙ Process Song auto-chart degrades gracefully, pointing at Settings for phone setup')
   : bad('grabber-down fallback: ' + JSON.stringify(processGuards));
+
+// --- one button: Process Song fetches lyrics when missing, skips when cached --
+const oneBtn = await page.evaluate(async () => {
+  window.__origRefetch = refetchLyrics;
+  const origFetch = window.fetch;
+  window.fetch = (u, o) => String(u).includes(':8934')
+    ? Promise.reject(new TypeError('connection refused'))   // keep the grabber out of this test
+    : origFetch(u, o);
+  let calls = 0;
+  refetchLyrics = async () => { calls++; };
+  trClear(CFY.yt.videoId);                                   // lyrics missing
+  document.getElementById('ytSyncBtn').click();
+  for (let i = 0; i < 60 && document.getElementById('ytSyncBtn').disabled; i++)
+    await new Promise(r => setTimeout(r, 50));
+  const whenMissing = calls;
+  trSave(CFY.yt.videoId, { lines: [{ t: 0, text: 'cached' }] });   // lyrics cached
+  document.getElementById('ytSyncBtn').click();
+  for (let i = 0; i < 60 && document.getElementById('ytSyncBtn').disabled; i++)
+    await new Promise(r => setTimeout(r, 50));
+  const whenCached = calls;
+  refetchLyrics = window.__origRefetch;
+  window.fetch = origFetch;
+  return { whenMissing, whenCached };
+});
+oneBtn.whenMissing === 1 && oneBtn.whenCached === 1
+  ? ok('⚙ Process Song fetches lyrics when missing and skips when already cached (one button)')
+  : bad('one-button lyrics: ' + JSON.stringify(oneBtn));
 await page.evaluate(loadTestSong);   // restore a chart for the drag tests below
 
 // --- Drag-to-adjust the OFFSET / BPM readout windows -------------------------
@@ -392,6 +419,7 @@ await page.evaluate(async () => {
     setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
   }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
   window.loadYtApi = () => Promise.resolve();
+  trSave('vid-autochart', { lines: [{ t: 0, text: 'seed' }] });
   await ytAttach('vid-autochart', 'Auto Chart Video', 'Auto Channel');
   await new Promise(r => setTimeout(r, 30));
   // 20s mono 16-bit WAV, clicks every 0.5s (120bpm) from t=0.2
@@ -715,6 +743,25 @@ const priming = await page.evaluate(async () => {
 priming.asked && priming.flagSet && priming.status.includes('MIC READY')
   ? ok('permission priming asks for the mic once and reports readiness')
   : bad('priming: ' + JSON.stringify(priming));
+
+// --- settings: grabber URL round-trip (phone tunnel setup) --------------------
+const grabSettings = await page.evaluate(() => {
+  settingsOpen(true);
+  document.getElementById('stGrabIn').value = 'https://my-tunnel.trycloudflare.com/';
+  document.getElementById('stGrabSave').click();
+  const saved = localStorage.getItem('cfy_grab');
+  const base1 = grabBase();
+  document.getElementById('stGrabIn').value = '';
+  document.getElementById('stGrabSave').click();
+  const cleared = localStorage.getItem('cfy_grab');
+  const base2 = grabBase();
+  settingsOpen(false);
+  return { saved, base1, cleared, base2 };
+});
+grabSettings.saved === 'https://my-tunnel.trycloudflare.com' && grabSettings.base1 === grabSettings.saved
+  && grabSettings.cleared === null && grabSettings.base2.includes('127.0.0.1:8934')
+  ? ok('settings grabber URL saves (slash-trimmed), and clearing falls back to the desktop default')
+  : bad('grabber settings: ' + JSON.stringify(grabSettings));
 
 // --- search fallback without an API key --------------------------------------
 const search = await page.evaluate(async () => {
