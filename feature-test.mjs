@@ -452,17 +452,90 @@ autoChart.status.includes('AUTO-CHARTED') && autoChart.inLibrary
   ? ok('auto-charted song lands in the library with a summary status')
   : bad('status/library: ' + JSON.stringify(autoChart));
 
-await page.evaluate(() => { CFY.yt.player.getCurrentTime = () => 5; ytDetach(false); });
-const shArtistAfterDetach = await page.evaluate(() => document.getElementById('shArtist').textContent);
-shArtistAfterDetach.includes('▶') === false
+// --- persistence: the processed chart survives a full reload, and re-attaching
+// the same video restores it (open app → tap recent → playing)
+const persisted = await page.evaluate(() =>
+  (JSON.parse(localStorage.getItem('cfy_imported') || '[]')).some(s => s.videoId === 'vid-autochart'));
+persisted
+  ? ok('processed chart persisted to localStorage with its videoId')
+  : bad('cfy_imported missing the auto-charted song');
+await page.reload();
+await page.waitForSelector('#app');
+const resumed = await page.evaluate(async () => {
+  const hydrated = st.imported.some(s => s.videoId === 'vid-autochart');
+  window.YT = { Player: function (el, opts) {
+    this.getCurrentTime = () => 0; this.getDuration = () => 20; this.setPlaybackRate = () => {};
+    setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
+  }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
+  window.loadYtApi = () => Promise.resolve();
+  await ytAttach('vid-autochart', 'Auto Chart Video', 'Auto Channel');
+  await new Promise(r => setTimeout(r, 30));
+  return { hydrated,
+           songArtist: st.song ? st.song.artist : null,
+           recentShown: getComputedStyle(document.getElementById('ytRecent')).display !== 'none',
+           recentChips: document.querySelectorAll('#ytRecent .yt-recent-chip').length };
+});
+resumed.hydrated && resumed.songArtist && resumed.songArtist.includes('AUTO-CHARTED')
+  ? ok('after a reload, re-attaching the video auto-restores its processed chart')
+  : bad('resume: ' + JSON.stringify(resumed));
+resumed.recentShown && resumed.recentChips >= 1
+  ? ok(`recent-videos quick-resume row shows ${resumed.recentChips} chip(s)`)
+  : bad('recent row: ' + JSON.stringify(resumed));
+
+// --- declutter: synth-only modules hide in play-along mode, return on detach --
+const declutter = await page.evaluate(() => {
+  const disp = id => getComputedStyle(document.getElementById(id)).display;
+  const attached = { mix: disp('mixMod'), countIn: disp('countInSw') };
+  CFY.yt.player.getCurrentTime = () => 5;
+  ytDetach(false);
+  const detached = { mix: disp('mixMod'), countIn: disp('countInSw'),
+                     shArtist: document.getElementById('shArtist').textContent };
+  return { attached, detached };
+});
+declutter.attached.mix === 'none' && declutter.attached.countIn === 'none'
+  ? ok('mixer and count-in hide while a video is attached (the video is the band)')
+  : bad('declutter attached: ' + JSON.stringify(declutter.attached));
+declutter.detached.mix !== 'none' && declutter.detached.countIn !== 'none'
+  ? ok('mixer and count-in return after detaching')
+  : bad('declutter detached: ' + JSON.stringify(declutter.detached));
+declutter.detached.shArtist.includes('▶') === false
   ? ok('detaching restores the loaded song\'s own artist line')
-  : bad('shArtist after detach: ' + shArtistAfterDetach);
+  : bad('shArtist after detach: ' + declutter.detached.shArtist);
+
+// --- importing an audio file auto-searches YouTube for it (⤺ Title, automated)
+const importSearch = await page.evaluate(async () => {
+  window.__origSearch2 = doYtSearch;
+  let fired = null;
+  doYtSearch = () => { fired = document.getElementById('ytQuery').value; };
+  const sr = 22050, dur = 12, n = sr * dur;      // 12s click-track WAV, messy filename
+  const pcm = new Int16Array(n);
+  for (let t = 0.2; t < dur; t += 0.5) { const s = Math.floor(t * sr);
+    for (let i = 0; i < 400 && s + i < n; i++) pcm[s + i] += Math.round(Math.sin(i * 0.5) * Math.exp(-i / 60) * 20000); }
+  const wav = new ArrayBuffer(44 + n * 2); const dv = new DataView(wav);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); w(36, 'data'); dv.setUint32(40, n * 2, true);
+  new Int16Array(wav, 44).set(pcm);
+  const file = new File([wav], 'Wonderwall (Official Video).wav', { type: 'audio/wav' });
+  const dt = new DataTransfer(); dt.items.add(file);
+  const inp = document.getElementById('fileInput');
+  inp.files = dt.files;
+  inp.dispatchEvent(new Event('change'));
+  for (let i = 0; i < 300 && fired === null; i++) await new Promise(r => setTimeout(r, 100));
+  const res = { fired, imported: st.imported.some(s => s.title.includes('Wonderwall')) };
+  doYtSearch = window.__origSearch2;
+  return res;
+});
+importSearch.fired && importSearch.fired.toLowerCase().includes('wonderwall') && importSearch.imported
+  ? ok(`importing audio auto-searches YouTube for it ("${importSearch.fired}")`)
+  : bad('import auto-search: ' + JSON.stringify(importSearch));
 
 // --- no song bank: attaching a video with nothing loaded replaces the -------
 // "NOW PLAYING - *" placeholder title, and Play works with no chords at all
 const noBank = await page.evaluate(async () => {
   st.song = null; st.cells = []; st.mode = 'synth';
-  st.imported = []; renderLibrary();   // drop the auto-charted song from the e2e test above
+  st.imported = []; localStorage.removeItem('cfy_imported'); renderLibrary();   // drop charts from the tests above
   $('shTitle').textContent = 'NOW PLAYING - *';
   $('shArtist').textContent = 'SEARCH YOUTUBE TO BEGIN, OR IMPORT AUDIO';
   window.YT = { Player: function (el, opts) {
@@ -491,7 +564,7 @@ noBank.shTitle === 'NOW PLAYING - FRESH VIDEO TITLE'
 noBank.shArtist === 'SOME CHANNEL' ? ok('artist line shows the channel when no song is loaded') : bad('shArtist: ' + noBank.shArtist);
 noBank.playing ? ok('▶ PLAY works in YouTube mode with no chord chart loaded at all') : bad('play did not start with no song loaded');
 
-// --- analyzeBuffer exposes phaseSec (used by the mic "Listen for Beat" flow) -
+// --- analyzeBuffer exposes phaseSec (used by ⚙ auto-chart's downbeat offset) -
 const beatDetect = await page.evaluate(async () => {
   if (!ensureCtx()) return { err: 'no ctx' };
   const sr = 22050, dur = 20, bpm = 120, beatSec = 60 / bpm;
@@ -510,110 +583,6 @@ beatDetect.bpm && Math.abs(beatDetect.bpm - 120) < 6
 typeof beatDetect.phaseSec === 'number' && beatDetect.phaseSec >= 0 && beatDetect.phaseSec < beatDetect.beatSec
   ? ok(`analyzeBuffer exposes a beat phase (${beatDetect.phaseSec.toFixed(3)}s) for downbeat estimation`)
   : bad('phaseSec out of range: ' + JSON.stringify(beatDetect));
-
-// --- 🎤 Listen for Beat: experimental mic-based tempo/downbeat estimation -----
-// helper: wait until the button label is restored (the whole flow finished)
-const waitListenDone = () => page.evaluate(async () => {
-  for (let i = 0; i < 60 && !document.getElementById('ytListenBtn').textContent.includes('Listen for Beat'); i++)
-    await new Promise(r => setTimeout(r, 50));
-});
-
-// (a) Regression: with NO chord chart loaded it must NOT crash (it used to throw
-//     writing st.song.bpm and surface a bogus "LISTEN FAILED").
-const listenNoChart = await page.evaluate(async () => {
-  st.song = null; st.cells = [];
-  CFY.yt.videoId = 'vid-listen-nochart';
-  CFY.yt.player = { getCurrentTime: () => 5 };
-  let threw = false;
-  try { document.getElementById('ytListenBtn').click(); await new Promise(r => setTimeout(r, 80)); }
-  catch (e) { threw = true; }
-  return { threw, status: document.getElementById('statusTxt').textContent,
-           btnRestored: document.getElementById('ytListenBtn').textContent.includes('Listen for Beat') };
-});
-!listenNoChart.threw && listenNoChart.status.includes('CHORD CHART FIRST') && listenNoChart.btnRestored
-  ? ok('🎤 Listen for Beat with no chart loaded is guarded (no crash, asks to load a chart)')
-  : bad('listen no-chart guard: ' + JSON.stringify(listenNoChart));
-
-// (b) Mic permission denied → graceful message, button restored
-await page.evaluate(loadTestSong);
-const listenDenied = await page.evaluate(async () => {
-  CFY.yt.videoId = 'vid-listen-test';
-  CFY.yt.player = { getCurrentTime: () => 5 };
-  const origGUM = navigator.mediaDevices.getUserMedia;
-  navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
-  document.getElementById('ytListenBtn').click();
-  await new Promise(r => setTimeout(r, 200));
-  const status = document.getElementById('statusTxt').textContent;
-  const btnRestored = document.getElementById('ytListenBtn').textContent.includes('Listen for Beat');
-  navigator.mediaDevices.getUserMedia = origGUM;
-  return { status, btnRestored };
-});
-listenDenied.status.includes('MIC ACCESS DENIED') && listenDenied.btnRestored
-  ? ok('🎤 Listen for Beat degrades gracefully when mic permission is denied')
-  : bad('mic-denial handling: ' + JSON.stringify(listenDenied));
-
-// (c) Success path — stub getUserMedia + MediaRecorder + decodeAudioData with a
-//     synthetic 120bpm click track; the REAL analyzeBuffer/estimateTempo runs.
-await page.evaluate(loadTestSong);
-await page.evaluate(async () => {
-  CFY.yt.videoId = 'vid-listen-ok';
-  CFY.yt.player = { getCurrentTime: () => 10 };
-  window.__origGUM = navigator.mediaDevices.getUserMedia;
-  window.__origMR = window.MediaRecorder;
-  window.__origDecode = ctx.decodeAudioData;
-  navigator.mediaDevices.getUserMedia = () => Promise.resolve({ getTracks: () => [{ stop() {} }] });
-  window.MediaRecorder = class {
-    constructor(stream, opts) { this.stream = stream; this.mimeType = (opts && opts.mimeType) || 'audio/webm'; this.ondataavailable = null; this.onstop = null; }
-    start() {}
-    stop() { if (this.ondataavailable) this.ondataavailable({ data: new Blob(['x'.repeat(2048)]) }); if (this.onstop) this.onstop(); }
-  };
-  ctx.decodeAudioData = () => {
-    const sr = 22050, dur = 12, beatSec = 0.5;
-    const buf = ctx.createBuffer(1, sr * dur, sr);
-    const d = buf.getChannelData(0);
-    for (let t = 0.2; t < dur; t += beatSec) { const s = Math.floor(t * sr); for (let i = 0; i < 400; i++) if (s + i < d.length) d[s + i] += Math.sin(i * 0.5) * Math.exp(-i / 60); }
-    return Promise.resolve(buf);
-  };
-  window.__listenDur = 0.05;
-  document.getElementById('ytListenBtn').click();
-});
-await waitListenDone();
-const listenOk = await page.evaluate(() => {
-  const res = { bpm: st.song.bpm, offset: CFY.yt.offset, status: document.getElementById('statusTxt').textContent,
-                btnRestored: document.getElementById('ytListenBtn').textContent.includes('Listen for Beat') };
-  navigator.mediaDevices.getUserMedia = window.__origGUM; window.MediaRecorder = window.__origMR; ctx.decodeAudioData = window.__origDecode;
-  delete window.__listenDur;
-  return res;
-});
-listenOk.bpm && Math.abs(listenOk.bpm - 120) < 6 && listenOk.offset >= 10 && listenOk.btnRestored
-  ? ok(`🎤 Listen for Beat success path locks a tempo (${Math.round(listenOk.bpm)} bpm) and sets the downbeat`)
-  : bad('listen success path: ' + JSON.stringify(listenOk));
-
-// (d) Empty recording (no chunks) → clear "NO AUDIO CAPTURED", not a cryptic decode error
-await page.evaluate(loadTestSong);
-await page.evaluate(async () => {
-  CFY.yt.videoId = 'vid-listen-empty';
-  CFY.yt.player = { getCurrentTime: () => 3 };
-  window.__origGUM = navigator.mediaDevices.getUserMedia;
-  window.__origMR = window.MediaRecorder;
-  navigator.mediaDevices.getUserMedia = () => Promise.resolve({ getTracks: () => [{ stop() {} }] });
-  window.MediaRecorder = class {
-    constructor() { this.ondataavailable = null; this.onstop = null; this.mimeType = 'audio/webm'; }
-    start() {} stop() { if (this.onstop) this.onstop(); }   // emit NO chunks
-  };
-  window.__listenDur = 0.05;
-  document.getElementById('ytListenBtn').click();
-});
-await waitListenDone();
-const listenEmpty = await page.evaluate(() => {
-  const res = { status: document.getElementById('statusTxt').textContent,
-                btnRestored: document.getElementById('ytListenBtn').textContent.includes('Listen for Beat') };
-  navigator.mediaDevices.getUserMedia = window.__origGUM; window.MediaRecorder = window.__origMR; delete window.__listenDur;
-  return res;
-});
-listenEmpty.status.includes('NO AUDIO CAPTURED') && listenEmpty.btnRestored
-  ? ok('🎤 Listen for Beat reports "no audio captured" instead of a cryptic decode error')
-  : bad('listen empty-recording: ' + JSON.stringify(listenEmpty));
 
 // --- tuner: readout opacity tracks signal, holds + fades instead of blanking --
 const tunerFade = await page.evaluate(async () => {

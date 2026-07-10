@@ -567,6 +567,10 @@
   .yt-search{display:flex;gap:7px;flex-wrap:wrap}
   #ytQuery{flex:1;min-width:190px}
   #ytPttBtn{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+  #ytRecent{display:none;gap:8px;overflow-x:auto;margin-top:11px;padding-bottom:4px}
+  .yt-recent-chip{flex:0 0 auto;display:flex;align-items:center;gap:8px;max-width:230px;text-align:left}
+  .yt-recent-chip img{width:42px;height:31px;object-fit:cover;border-radius:3px;flex:none}
+  .yt-recent-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px}
   #ytMsg{font-family:var(--crt);font-size:15px;color:var(--phos);margin-top:8px;
     min-height:18px;line-height:1.3}
   #ytMsg a{color:var(--warn)}
@@ -775,11 +779,11 @@
         <div class="yt-search">
           <input id="ytQuery" class="field" type="search" placeholder="Search YouTube — or paste a link…" aria-label="Search YouTube">
           <button class="btn" id="ytPttBtn" title="Hold to speak your search — bind a hardware key in Settings" aria-label="Hold to speak your search">🎙</button>
-          <button class="btn" id="ytFillBtn" title="Use the loaded song’s title">⤺ Title</button>
           <button class="btn" id="ytSearchBtn">Search</button>
         </div>
-        <div id="ytMsg">SEARCH A VIDEO TO PLAY ALONG WITH LYRICS AND CHORDS — IMPORT AUDIO FIRST IF YOU WANT AN AUTO-DETECTED CHORD CHART.</div>
+        <div id="ytMsg">SEARCH A VIDEO TO PLAY ALONG — ⚙ PROCESS SONG BUILDS ITS CHORD CHART AUTOMATICALLY.</div>
         <ul id="ytResults"></ul>
+        <div id="ytRecent"></div>
         <div class="inst-tabs" id="instTabs">
           <button class="btn lit" data-inst="gtr" aria-pressed="true">GTR</button>
           <button class="btn" data-inst="uke" aria-pressed="false">UKE</button>
@@ -793,7 +797,6 @@
             <div id="crtStatus"><span id="statusTxt">SYSTEM READY.</span> <span class="cursor"></span></div>
             <button class="btn big" id="ytLyrBtn">⇣ Fetch Lyrics</button>
             <button class="btn big" id="ytSyncBtn">⚙ Process Song</button>
-            <button class="btn" id="ytListenBtn" title="Experimental: estimate tempo from the video's actual audio via your microphone">🎤 Listen for Beat (experimental)</button>
             <div class="stepper">
               <button class="btn" id="ytOffDown" aria-label="Offset down 0.1s">−</button>
               <div class="lcd drag" id="ytOffCell" title="Drag left/right to adjust — or use ± for fine tuning"><span class="lbl">◂ OFFSET s ▸</span><span class="val num" id="ytOffLcd">0.00</span></div>
@@ -829,7 +832,7 @@
           <span id="loopLed" class="led"></span>
         </div>
         <div class="sep"></div>
-        <label class="switch" title="Count-in ★"><input type="checkbox" id="countIn"><span class="track"></span>COUNT-IN</label>
+        <label class="switch" id="countInSw" title="Count-in ★"><input type="checkbox" id="countIn"><span class="track"></span>COUNT-IN</label>
         <label class="switch"><input type="checkbox" id="autoScroll" checked><span class="track"></span>AUTOSCROLL</label>
         <div class="sep"></div>
         <label class="switch"><input type="checkbox" id="simplifySw"><span class="track"></span>SIMPLIFY CHORDS</label>
@@ -928,7 +931,7 @@
             </div>
             <div class="hint" id="tempoHint">50–150% PLAYBACK RATE.</div>
           </div>
-          <div class="module">
+          <div class="module" id="mixMod">
             <h4><span class="star">★</span> Mixer</h4>
             <div class="fader-row"><label>Chord</label><input type="range" id="volChord" min="0" max="100" value="80"><output id="volChordOut">80</output></div>
             <div class="fader-row"><label>Bass</label><input type="range" id="volBass" min="0" max="100" value="75"><output id="volBassOut">75</output></div>
@@ -1254,9 +1257,17 @@ const st={
   setlists:(()=>{try{return JSON.parse(localStorage.getItem('cfy_sets')||'{}');}catch(e){return {};}})(),
   libTab:'all', search:'', openSet:null,
   simplify:false, showMini:true,
-  imported:[], buffer:null
+  imported:(()=>{try{return JSON.parse(localStorage.getItem('cfy_imported')||'[]');}catch(e){return [];}})(),
+  buffer:null
 };
 function saveSets(){ try{localStorage.setItem('cfy_sets',JSON.stringify(st.setlists));}catch(e){} }
+/* processed charts survive reloads — audio buffers can't serialize, so file
+   imports restore bufferless (they reload in synth mode; the chart is what
+   matters). Auto-charted songs carry a videoId so re-attaching the same
+   video restores its chart instead of re-downloading and re-analyzing. */
+function saveImported(){
+  try{ localStorage.setItem('cfy_imported',JSON.stringify(st.imported.map(({buffer,...rest})=>rest))); }catch(e){}
+}
 function esc(x){ return String(x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 const yt={player:null,videoId:null,offset:0,title:'',by:'',apiPromise:null};
 const $=id=>document.getElementById(id);
@@ -1298,8 +1309,8 @@ function miniShape(sym){
 }
 function renderGrid(){
   if(!st.song){
-    grid.innerHTML='<div class="empty-screen"><div class="big">AWAITING FILE</div>'+
-      '<div class="sm">Search YouTube above to play along and follow lyrics<br>— or import audio for auto-detected chords ★</div></div>';
+    grid.innerHTML='<div class="empty-screen"><div class="big">AWAITING SIGNAL</div>'+
+      '<div class="sm">Search YouTube above, then tap ⚙ Process Song<br>— the chord chart builds itself from the video ★</div></div>';
     return;
   }
   const frag=document.createDocumentFragment();
@@ -1902,6 +1913,9 @@ function loadSong(s){
   renderGrid(); renderLibrary(); updateFavBtn();
   renderLyrics();
   setStatus('LOADED: '+s.title.toUpperCase()+(st.mode==='audio'?' [TAPE]':' [SYNTH]'));
+  // no video attached yet? prefill the search with this chart's title so
+  // finding its video is one tap (quietly — no surprise network)
+  if(!yt.player&&s.title) $('ytQuery').value=cleanQuery(s.title);
   refreshNow(true);
 }
 function refreshModeHints(){
@@ -1911,9 +1925,11 @@ function refreshModeHints(){
    :'50–150% PLAYBACK RATE. PITCH STAYS PUT.';
   $('mixHint').textContent=
     st.mode==='audio'?'CHORD FADER = SYNTH PADS OVER THE TAPE.'
-   :st.mode==='yt'  ?'MUTED IN PLAY-ALONG — THE VIDEO IS THE BAND.'
    :'SYNTH BAND LEVELS.';
   $('bpmLbl').textContent=st.mode==='yt'?'RATE':'BPM';
+  // synth-only controls just clutter play-along mode — the video is the band
+  $('mixMod').style.display=st.mode==='yt'?'none':'';
+  $('countInSw').style.display=st.mode==='yt'?'none':'';
 }
 function updateChips(){
   const s=st.song; if(!s){$('shChips').innerHTML='';return;}
@@ -2155,7 +2171,9 @@ async function analyzeBuffer(buf,onProgress){
     beatSec, phaseSec:tempo?tempo.phaseSec:null, key
   };
 }
-let importCount=0;
+// continue numbering after any charts restored from a previous session —
+// a fresh counter would mint duplicate ids (favs/setlists/sync key on them)
+let importCount=st.imported.reduce((n,s)=>{const m=/^imp(\d+)$/.exec(s.id);return m?Math.max(n,+m[1]):n;},0);
 /* Decode raw audio bytes and run the chord/tempo detector. Shared by the
    file-import flow and Process Song's auto-chart-from-video flow. */
 async function chartFromAudioBytes(ab,onProgress){
@@ -2186,11 +2204,14 @@ $('fileInput').addEventListener('change',async e=>{
       sections:[['DETECTED SIGNAL',res.chords]],
       buffer:buf
     };
-    st.imported.push(song);
+    st.imported.push(song); saveImported();
     const nSeg=res.chords.filter(c=>c[0]!=='N.C.').length;
     status.textContent='> DONE. '+nSeg+' CHORDS · '+(res.bpm?Math.round(res.bpm)+' BPM':'FREE TIME')+' · KEY '+res.key;
     setTimeout(()=>{prog.style.display='none';bar.style.width='0%';},1600);
     renderLibrary(); loadSong(song);
+    // the old ⤺ Title button, automated: an import's obvious next step is
+    // finding its video — run the search with the cleaned-up filename.
+    if(!yt.player){ $('ytQuery').value=cleanQuery(song.title); doYtSearch(); }
   }catch(err){
     status.textContent=err&&err.message==='no audio engine'
       ? '> NO AUDIO ENGINE AVAILABLE.'
@@ -2963,8 +2984,39 @@ async function doYtSearch(){
     $('ytResults').style.display='none';
   }
 }
+/* ── recent videos: one-tap resume. Chart (cfy_imported), offset (cfy_ytsync)
+   and this row (cfy_recent) together make "open app → tap → playing". ── */
+function recentStore(){ try{return JSON.parse(localStorage.getItem('cfy_recent')||'[]');}catch(e){return [];} }
+function addRecent(id,title,by){
+  try{
+    const r=recentStore().filter(x=>x.id!==id);
+    r.unshift({id,title:title||id,by:by||''});
+    localStorage.setItem('cfy_recent',JSON.stringify(r.slice(0,8)));
+  }catch(e){}
+}
+function renderRecent(){
+  const box=$('ytRecent'); if(!box) return;
+  const r=recentStore();
+  box.style.display=r.length?'flex':'none';
+  box.innerHTML='';
+  r.forEach(v=>{
+    const b=document.createElement('button');
+    b.className='btn yt-recent-chip';
+    b.title=v.title+(v.by?' — '+v.by:'');
+    b.innerHTML='<img loading="lazy" alt="" src="https://i.ytimg.com/vi/'+esc(v.id)+'/default.jpg" '+
+      'onerror="this.style.display=\'none\'"><span>'+esc(v.title)+'</span>';
+    b.addEventListener('click',()=>ytAttach(v.id,v.title,v.by));
+    box.appendChild(b);
+  });
+}
 async function ytAttach(videoId,title,by){
   const msg=$('ytMsg');
+  // resume: nothing loaded and this video was processed before → its chart
+  // pops back in (offset follows via cfy_ytsync once the song id matches)
+  if(!st.song){
+    const m=st.imported.find(s=>s.videoId===videoId);
+    if(m) loadSong(m);
+  }
   const hadSong=!!st.song;   // no bundled song bank — a video alone is enough to attach
   pause();
   msg.textContent='> LOADING PLAYER…';
@@ -3005,8 +3057,11 @@ async function ytAttach(videoId,title,by){
     $('shArtist').textContent=(by||'YOUTUBE').toUpperCase();
   }
   const keep=grid.scrollTop; renderGrid(); grid.scrollTop=keep;
-  msg.textContent='> PLAY-ALONG READY. HIT ▶, THEN TAP ⚙ PROCESS SONG ON BEAT ONE.';
+  msg.textContent=st.song
+    ? '> PLAY-ALONG READY — HIT ▶. TAP ⚙ PROCESS SONG TO RE-FIT THE CHART.'
+    : '> PLAY-ALONG READY — TAP ⚙ PROCESS SONG TO BUILD THE CHORD CHART.';
   setStatus('YOUTUBE ATTACHED — '+(title||videoId).toUpperCase());
+  addRecent(videoId,title,by); renderRecent();
   // getDuration() reads 0 until the player has actually loaded the video — wait
   // for it (or give up after 3s) so the LRCLIB duration-match isn't fetching blind
   await waitForDuration(videoId,3000);
@@ -3134,9 +3189,7 @@ async function primePermissions(){
   finally{ try{localStorage.setItem('cfy_perm','1');}catch(_){} }
 }
 primePermissions();
-$('ytFillBtn').addEventListener('click',()=>{
-  if(st.song){ $('ytQuery').value=st.song.title+' '+(st.song.artist.split('·')[0]||''); $('ytQuery').focus(); }
-});
+renderRecent();
 /* ── Songs drawer + Settings modal (header buttons) ── */
 function libOpen(open){
   $('library').classList.toggle('open',open);
@@ -3196,6 +3249,14 @@ function autoScaleTempo(){
 function grabBase(){ try{return localStorage.getItem('cfy_grab')||'http://127.0.0.1:8934';}catch(e){return 'http://127.0.0.1:8934';} }
 async function autoChartFromVideo(btn){
   const vid=yt.videoId, title=yt.title, by=yt.by;
+  // processed before? restore the saved chart instead of re-grabbing
+  const prior=st.imported.find(s=>s.videoId===vid);
+  if(prior){
+    loadSong(prior);
+    await ytAttach(vid,title,by);
+    setStatus('CHART RESTORED — THIS VIDEO WAS ALREADY PROCESSED.');
+    return;
+  }
   let health=null;
   try{
     const ctl=new AbortController(); const to=setTimeout(()=>ctl.abort(),1500);
@@ -3231,12 +3292,13 @@ async function autoChartFromVideo(btn){
   const perBeat=res.bpm/60;
   const song={
     id:'imp'+(++importCount),
+    videoId:vid,
     title:title||vid,
     artist:(by?by+' · ':'')+'AUTO-CHARTED',
     bpm:res.bpm,sig:[4,4],key:res.key,
     sections:[['DETECTED SIGNAL',res.chords.map(c=>[c[0],c[1]*perBeat])]],
   };
-  st.imported.push(song);
+  st.imported.push(song); saveImported();
   renderLibrary();
   loadSong(song);              // note: this detaches the video…
   await ytAttach(vid,title,by); // …so re-attach it to the new chart
@@ -3302,70 +3364,6 @@ function wireLcdDrag(el,get,set,perPx){
 }
 wireLcdDrag($('ytOffCell'),()=>yt.offset,v=>setOffset(v),0.05);
 wireLcdDrag($('ytBpmCell'),()=>songBpm(),v=>setSongBpm(v),0.5);
-
-/* ── experimental: estimate real tempo/downbeat by listening through the mic
-   while the video plays through speakers. Reuses the same FFT onset/tempo
-   estimator as file-import analysis (analyzeBuffer/estimateTempo) — genuine
-   signal analysis, not a static guess — but noise/room-dependent, hence "experimental". */
-async function listenForBeat(){
-  if(!yt.player||!yt.player.getCurrentTime){ setStatus('ATTACH A YOUTUBE VIDEO FIRST.'); return; }
-  if(!st.song){ setStatus('LOAD OR IMPORT A CHORD CHART FIRST — LISTEN SETS ITS TEMPO.'); return; }
-  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia||typeof MediaRecorder==='undefined'){
-    setStatus('MIC RECORDING ISN’T SUPPORTED IN THIS BROWSER — USE ⚙ PROCESS SONG INSTEAD.'); return;
-  }
-  if(!ensureCtx()){ setStatus('AUDIO ENGINE UNAVAILABLE — CAN’T LISTEN FOR THE BEAT.'); return; }
-  const btn=$('ytListenBtn'); const label=btn.textContent;
-  let stream;
-  try{ stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,autoGainControl:false,noiseSuppression:false}}); }
-  catch(e){ setStatus('MIC ACCESS DENIED — CAN’T LISTEN FOR THE BEAT.'); return; }
-  const startedAt=yt.player.getCurrentTime();
-  // Record in a container this same browser can decode back: Safari only does
-  // audio/mp4, Chrome/Firefox prefer webm/opus. Picking the wrong one is the
-  // classic cause of a decodeAudioData EncodingError on the way back in.
-  let mime='';
-  if(MediaRecorder.isTypeSupported){
-    mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/aac'].find(t=>MediaRecorder.isTypeSupported(t))||'';
-  }
-  const rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);
-  const chunks=[];
-  rec.ondataavailable=e=>{ if(e.data&&e.data.size) chunks.push(e.data); };
-  const stopped=new Promise(res=>{ rec.onstop=res; });
-  btn.disabled=true;
-  try{
-    rec.start();
-    const DUR=(typeof window.__listenDur==='number'&&window.__listenDur>0)?window.__listenDur:15;  // test hook
-    const step=Math.min(1,DUR);
-    for(let left=DUR;left>0;left-=step){ btn.textContent='🎤 Listening… '+Math.ceil(left)+'s'; await new Promise(r=>setTimeout(r,step*1000)); }
-    rec.stop();
-    await stopped;
-    stream.getTracks().forEach(t=>t.stop());
-    btn.textContent='🎤 Analyzing…';
-    const totalSize=chunks.reduce((n,c)=>n+(c.size||0),0);
-    if(!totalSize){ setStatus('NO AUDIO CAPTURED — CHECK THE MIC AND THE PHONE’S VOLUME, THEN TRY AGAIN.'); return; }
-    const blob=new Blob(chunks,{type:rec.mimeType||mime||'audio/webm'});
-    const arr=await blob.arrayBuffer();
-    const buf=await ctx.decodeAudioData(arr);
-    const result=await analyzeBuffer(buf,()=>{});
-    if(!result.bpm){
-      setStatus('COULDN’T LOCK A TEMPO FROM THAT LISTEN — TRY SOMEWHERE QUIETER, OR USE ⚙ PROCESS SONG.');
-    }else{
-      setSongBpm(result.bpm);
-      setOffset(Math.max(0,startedAt+(result.phaseSec||0)));
-      setStatus('LISTENED IN — '+Math.round(songBpm())+' BPM, DOWNBEAT SET FROM THE MIC (EXPERIMENTAL).');
-    }
-  }catch(e){
-    try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){}
-    const name=(e&&e.name)||'';
-    if(name==='EncodingError'||name==='NotSupportedError'){
-      setStatus('LISTEN FAILED ('+name+') — THIS BROWSER CAN’T DECODE ITS OWN MIC RECORDING. USE ⚙ PROCESS SONG + DRAG.');
-    }else{
-      setStatus('LISTEN FAILED — '+((e&&e.message)||'COULD NOT ANALYZE THE RECORDING')+'.');
-    }
-  }finally{
-    btn.textContent=label; btn.disabled=false;
-  }
-}
-$('ytListenBtn').addEventListener('click',listenForBeat);
 
 /* ================================================================
    BOOT
