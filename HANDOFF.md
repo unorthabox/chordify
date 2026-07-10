@@ -11,7 +11,16 @@ HTTPS host (not an ephemeral tunnel, not a wrapped `.apk`).
 
 ## Where things stand
 
-### Done — files are written, not yet verified
+### Done and verified
+
+`pwa-test.mjs` and `update-test.mjs` both pass. Confirmed with a real Chromium:
+the service worker activates, the shell is genuinely in Cache Storage, a fresh
+page load **with the browser offline** boots the app from cache with no console
+errors, cross-origin YouTube fetches reject cleanly rather than hanging, and a
+new `index.html` propagates on the launch after an online launch with no
+`VERSION` bump.
+
+Committed to a local git repo (`f9d4942`). Not yet pushed anywhere.
 
 The app was one self-contained `index.html`. It is now four files, because a
 service worker **must** be a real same-origin `.js` file (you cannot register one
@@ -25,14 +34,14 @@ nothing sane to resolve against.
 | `manifest.webmanifest` | **new** | `display: standalone`, relative `start_url`/`scope` |
 | `icon-180.png` | **new** | Extracted from the old `apple-touch-icon` data-URI |
 | `serve.sh` | **edited** | Comments corrected — `localhost` is a secure context, so SW works there too |
-| `index.html.orig` | **backup** | The original single-file version, md5 `170ceba6829612476ee4e8ed27244236`. Delete once you're happy |
-| `pwa-test.mjs` | **new** | End-to-end Playwright test. **Never actually run.** |
+| `index.html.orig` | **backup** | The original single-file version, md5 `170ceba6829612476ee4e8ed27244236`. Delete once you're happy — git is your undo now |
+| `pwa-test.mjs` | **new** | End-to-end offline test. Passes. |
+| `update-test.mjs` | **new** | Proves new versions reach an installed app. Passes. |
 
 ### Not done
 
-1. **Run the test.** This is the next thing. Nothing below is confirmed working.
-2. **Deploy** to a static HTTPS host.
-3. **Install** on the iPhone and confirm offline launch.
+1. **Deploy** to a static HTTPS host. Blocked on `gh auth login` (interactive).
+2. **Install** on the iPhone and confirm offline launch.
 
 ---
 
