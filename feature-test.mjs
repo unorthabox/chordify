@@ -632,7 +632,7 @@ const tunerFade = await page.evaluate(async () => {
   signal = false;
   for (let i = 0; i < 8; i++) step();                    // signal stops
   const fading = { note: note(), op: op() };
-  for (let i = 0; i < 150; i++) step();                  // fade completes
+  for (let i = 0; i < 250; i++) step();                  // fade completes (~160 frames @0.985)
   const cleared = { note: note(), op: op() };
   micAnalyser = null; micBuf = null;                     // restore
   return { loud, fading, cleared };
@@ -646,6 +646,27 @@ tunerFade.fading && tunerFade.fading.note.startsWith('A') && tunerFade.fading.op
 tunerFade.cleared && tunerFade.cleared.note.startsWith('--') && Math.abs(tunerFade.cleared.op - 0.55) < 0.01
   ? ok('tuner clears to the dim idle display only after the fade completes')
   : bad('tuner cleared state: ' + JSON.stringify(tunerFade));
+
+// sensitivity: a quiet 440Hz sine (rms ≈ 0.0057, below the old 0.008 gate)
+// now registers; pseudo-random noise at a similar level still rejects.
+const tunerSens = await page.evaluate(() => {
+  if (!ensureCtx()) return { err: 'no ctx' };
+  const n = 8192, sr = ctx.sampleRate;
+  const quiet = new Float32Array(n);
+  const w = 2 * Math.PI * 440 / sr;
+  for (let i = 0; i < n; i++) quiet[i] = Math.sin(i * w) * 0.008;
+  let seed = 42;                                          // seeded LCG noise, rms ≈ 0.01
+  const rand = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const noise = new Float32Array(n);
+  for (let i = 0; i < n; i++) noise[i] = (rand() * 2 - 1) * 0.017;
+  return { quietHz: detectPitch(quiet, sr), noiseHz: detectPitch(noise, sr) };
+});
+tunerSens.quietHz > 0 && Math.abs(tunerSens.quietHz - 440) < 5
+  ? ok(`tuner picks up a quiet note below the old gate (${tunerSens.quietHz.toFixed(1)} Hz ≈ 440)`)
+  : bad('quiet-note sensitivity: ' + JSON.stringify(tunerSens));
+tunerSens.noiseHz === -1
+  ? ok('tuner confidence guard still rejects noise at the same level (no false notes)')
+  : bad('noise leaked through as a pitch: ' + tunerSens.noiseHz);
 
 // --- 🎙 push-to-talk voice search -----------------------------------------------
 const pttHold = await page.evaluate(async () => {

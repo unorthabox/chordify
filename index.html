@@ -2571,7 +2571,9 @@ function detectPitch(buf,sr){
   const S=buf.length;
   let rms=0; for(let i=0;i<S;i++) rms+=buf[i]*buf[i];
   rms=Math.sqrt(rms/S);
-  if(rms<0.008) return -1;
+  // low gate = picks up soft picking and long decay tails; safe because the
+  // periodicity check below rejects the noise frames this lets through
+  if(rms<0.004) return -1;
   let r1=0,r2=S-1;
   const thres=0.2;
   for(let i=0;i<S/2;i++) if(Math.abs(buf[i])<thres){r1=i;break;}
@@ -2588,6 +2590,10 @@ function detectPitch(buf,sr){
   let maxV=-1,maxP=-1;
   for(let i=d;i<n;i++) if(c[i]>maxV){maxV=c[i];maxP=i;}
   if(maxP<=0) return -1;
+  // confidence: a real note's autocorrelation peak carries a big share of the
+  // total energy (~0.6–0.9 normalized); room noise doesn't. Guards accuracy
+  // now that the RMS gate is low enough to let quiet frames through.
+  if(maxV<0.28*c[0]) return -1;
   const y1=c[maxP-1],y2=c[maxP],y3=c[maxP+1]||0;
   const a=(y1+y3-2*y2)/2, bb=(y3-y1)/2;
   const shift=a?-bb/(2*a):0;
@@ -2611,8 +2617,8 @@ function tunerLoop(){
   const noteEl=$('tunNote'),freqEl=$('tunFreq');
   if(hz<0){
     if(tunHeld){
-      tunFade*=0.975;                    // note gone — let the reading linger and dim
-      if(tunFade<0.12){                  // fully faded: now clear to the idle display
+      tunFade*=0.985;                    // note gone — let the reading linger and dim (~2.6s)
+      if(tunFade<0.09){                  // fully faded: now clear to the idle display
         tunHeld=false; tunFade=TUN_IDLE;
         noteEl.innerHTML='--<small></small>';
         freqEl.textContent='--- Hz';
