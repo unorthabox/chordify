@@ -498,6 +498,10 @@
   .stepper{display:flex;align-items:center;gap:8px;justify-content:center}
   .stepper .btn{padding:5px 12px;font-size:14px;line-height:1}
   .stepper .lcd{min-width:62px}
+  .lcd.drag{cursor:ew-resize;touch-action:none;user-select:none;-webkit-user-select:none;transition:border-color .12s,box-shadow .12s}
+  .lcd.drag .lbl{color:var(--scr-ink);opacity:.55}
+  .lcd.drag:hover{border-color:var(--scr-ink)}
+  .lcd.drag.dragging{border-color:var(--scr-ink);box-shadow:inset 0 2px 10px rgba(0,0,0,.6),0 0 0 1px var(--scr-ink)}
   input[type="range"]{-webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;cursor:pointer}
   input[type="range"]::-webkit-slider-runnable-track{height:6px;border-radius:2px;
     background:rgba(0,0,0,.45);border:1px solid var(--line)}
@@ -536,6 +540,7 @@
   #nextChord{font-family:var(--crt);font-size:15px;color:var(--ink-3);text-align:center;
     letter-spacing:.1em;margin-top:10px;text-transform:uppercase}
   .inst-tabs{display:flex;gap:5px}
+  #instTabs{margin-top:11px}
   .inst-tabs .btn{flex:1;text-align:center;padding:7px 4px}
   #diagram{
     color:var(--scr-ink);
@@ -696,17 +701,6 @@
     #refine{padding:6px 0}
     .tk{max-height:88vh}
   }
-  /* the notch */
-  @supports (padding:max(0px)){
-    @media (max-width:800px){
-      body{
-        padding-left:max(10px,env(safe-area-inset-left));
-        padding-right:max(10px,env(safe-area-inset-right));
-        padding-bottom:max(10px,env(safe-area-inset-bottom));
-      }
-    }
-  }
-
   @media (max-width:1180px){
     #rack{grid-template-columns:repeat(2,1fr)}
   }
@@ -716,6 +710,20 @@
     #rack{grid-template-columns:1fr}
     #ytStage{flex-direction:column}
     .head-right{width:100%;margin-left:0}
+  }
+
+  /* Keep content clear of the notch / iOS status bar (black-translucent).
+     Comes after the base body{padding:10px} so it wins the cascade;
+     guarded by @supports so browsers without max()/env() keep the fallback. */
+  @supports (padding:max(0px)){
+    @media (max-width:800px){
+      body{
+        padding-top:max(10px,env(safe-area-inset-top));
+        padding-left:max(10px,env(safe-area-inset-left));
+        padding-right:max(10px,env(safe-area-inset-right));
+        padding-bottom:max(10px,env(safe-area-inset-bottom));
+      }
+    }
   }
 </style>
 
@@ -732,6 +740,7 @@
     </div>
     <div class="head-right">
       <button class="btn" id="songsBtn" aria-haspopup="dialog" aria-expanded="false">☰ Songs</button>
+      <button class="btn" id="toolkitBtn" title="Tuner · Metronome · Chord Trainer">⚒ Toolkit <span style="color:var(--cyan)">★</span></button>
       <button class="btn" id="settingsBtn" title="Settings" aria-haspopup="dialog">⚙</button>
     </div>
   </header>
@@ -767,6 +776,12 @@
         </div>
         <div id="ytMsg">SEARCH A VIDEO TO PLAY ALONG WITH LYRICS AND CHORDS — IMPORT AUDIO FIRST IF YOU WANT AN AUTO-DETECTED CHORD CHART.</div>
         <ul id="ytResults"></ul>
+        <div class="inst-tabs" id="instTabs">
+          <button class="btn lit" data-inst="gtr" aria-pressed="true">GTR</button>
+          <button class="btn" data-inst="uke" aria-pressed="false">UKE</button>
+          <button class="btn" data-inst="mdl" aria-pressed="false">MDL</button>
+          <button class="btn" data-inst="pno" aria-pressed="false">KEY</button>
+        </div>
         <div id="ytStage">
           <div class="yt-frame"><div id="ytPlayer"></div></div>
           <div class="yt-sync">
@@ -775,44 +790,17 @@
             <button class="btn big" id="ytSyncBtn">⚙ Process Song</button>
             <button class="btn" id="ytListenBtn" title="Experimental: estimate tempo from the video's actual audio via your microphone">🎤 Listen for Beat (experimental)</button>
             <div class="stepper">
-              <button class="btn" id="ytOffDown">−</button>
-              <div class="lcd"><span class="lbl">OFFSET s</span><span class="val num" id="ytOffLcd">0.00</span></div>
-              <button class="btn" id="ytOffUp">+</button>
+              <button class="btn" id="ytOffDown" aria-label="Offset down 0.1s">−</button>
+              <div class="lcd drag" id="ytOffCell" title="Drag left/right to adjust — or use ± for fine tuning"><span class="lbl">◂ OFFSET s ▸</span><span class="val num" id="ytOffLcd">0.00</span></div>
+              <button class="btn" id="ytOffUp" aria-label="Offset up 0.1s">+</button>
             </div>
             <div class="stepper">
-              <button class="btn" id="ytBpmDown">−</button>
-              <div class="lcd"><span class="lbl">BPM</span><span class="val num" id="ytBpmLcd">120</span></div>
-              <button class="btn" id="ytBpmUp">+</button>
+              <button class="btn" id="ytBpmDown" aria-label="BPM down 1">−</button>
+              <div class="lcd drag" id="ytBpmCell" title="Drag left/right to adjust — or use ± for fine tuning"><span class="lbl">◂ BPM ▸</span><span class="val num" id="ytBpmLcd">120</span></div>
+              <button class="btn" id="ytBpmUp" aria-label="BPM up 1">+</button>
             </div>
             <button class="btn" id="ytDetachBtn">✕ Detach Video</button>
-            <div class="hint">PLAY THE VIDEO, THEN TAP ⚙ PROCESS SONG ON BEAT ONE — IT SETS THE DOWNBEAT AND AUTO-SCALES THE TEMPO TO FIT THE VIDEO'S ACTUAL LENGTH. NUDGE OFFSET/BPM IF IT DRIFTS.</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="panel" id="nowPlaying">
-        <div class="songhead" id="songhead">
-          <button class="starbtn" id="favBtn" title="Save to setlist">★</button>
-          <div>
-            <div class="title" id="shTitle">NOW PLAYING - *</div>
-            <div class="artist" id="shArtist">SEARCH YOUTUBE TO BEGIN, OR IMPORT AUDIO</div>
-          </div>
-          <div class="chips" id="shChips"></div>
-        </div>
-        <div class="np-body">
-          <div class="np-chord">
-            <div id="nowChord"><span class="sub">CURRENT CHORD</span><span id="nowSym">--</span></div>
-            <div id="nextChord">NEXT: --</div>
-          </div>
-          <div class="np-scope">
-            <div class="inst-tabs">
-              <button class="btn lit" data-inst="gtr" aria-pressed="true">GTR</button>
-              <button class="btn" data-inst="uke" aria-pressed="false">UKE</button>
-              <button class="btn" data-inst="mdl" aria-pressed="false">MDL</button>
-              <button class="btn" data-inst="pno" aria-pressed="false">KEY</button>
-            </div>
-            <div id="diagram"></div>
-            <div id="diagNote"></div>
+            <div class="hint">TAP ⚙ PROCESS SONG — IT SETS THE TEMPO TO FIT THE VIDEO'S LENGTH SO YOU CAN PLAY RIGHT AWAY. DRAG THE OFFSET WINDOW IF THE SONG STARTS AFTER AN INTRO, OR BPM IF IT DRIFTS (± FOR FINE TUNING).</div>
           </div>
         </div>
       </div>
@@ -844,8 +832,27 @@
         <div class="vu" id="vu" aria-hidden="true">
           <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
         </div>
-        <div class="sep"></div>
-        <button class="btn" id="toolkitBtn" title="Tuner · Metronome · Chord Trainer">⚒ Toolkit <span style="color:var(--cyan)">★</span></button>
+      </div>
+
+      <div class="panel" id="nowPlaying">
+        <div class="songhead" id="songhead">
+          <button class="starbtn" id="favBtn" title="Save to setlist">★</button>
+          <div>
+            <div class="title" id="shTitle">NOW PLAYING - *</div>
+            <div class="artist" id="shArtist">SEARCH YOUTUBE TO BEGIN, OR IMPORT AUDIO</div>
+          </div>
+          <div class="chips" id="shChips"></div>
+        </div>
+        <div class="np-body">
+          <div class="np-chord">
+            <div id="nowChord"><span class="sub">CURRENT CHORD</span><span id="nowSym">--</span></div>
+            <div id="nextChord">NEXT: --</div>
+          </div>
+          <div class="np-scope">
+            <div id="diagram"></div>
+            <div id="diagNote"></div>
+          </div>
+        </div>
       </div>
 
       <div id="crt">
@@ -3024,11 +3031,17 @@ document.addEventListener('keydown',e=>{
 });
 $('ytDetachBtn').addEventListener('click',()=>ytDetach(false));
 function updateYtBpmLcd(){ const el=$('ytBpmLcd'); if(el) el.textContent=Math.round(songBpm()); }
-/* Process Song: capture the downbeat tap as offset, then auto-scale the grid's
-   tempo so its total length exactly spans (video duration − offset). This is
-   the one real lever available without audio access to the YT iframe — it
-   fixes whole-song drift from a wrong/assumed BPM, though it can't correct for
-   the video having a different internal arrangement (e.g. an extra chorus). */
+function setSongBpm(v){
+  if(!st.song) return;
+  st.song.bpm=Math.max(30,Math.min(300,v));
+  updateChips(); updateYtBpmLcd(); refreshNow(true);
+}
+/* Auto-scale the grid's tempo so its total length exactly spans (video duration
+   − offset). With one-tap Process Song the offset starts at 0 (the song is
+   assumed to begin with the video); the user drags the OFFSET window to account
+   for an intro. This is the one real lever available without audio access to the
+   YT iframe — it fixes whole-song drift from a wrong/assumed BPM, though it can't
+   correct for the video having a different internal arrangement (e.g. a repeat). */
 function autoScaleTempo(){
   if(!st.song||!yt.player||!yt.player.getDuration) return;
   const dur=yt.player.getDuration();
@@ -3037,17 +3050,58 @@ function autoScaleTempo(){
   if(!dur||span<=0||!total) return;
   st.song.bpm=Math.max(30,Math.min(300,total*60/span));
   updateChips(); updateYtBpmLcd(); refreshNow(true);
-  setStatus('PROCESSED — BPM SET TO '+Math.round(st.song.bpm)+' TO FIT '+fmtTime(span)+' OF VIDEO FROM THE DOWNBEAT.');
+  setStatus('PROCESSED — TEMPO SET TO '+Math.round(st.song.bpm)+' BPM TO FIT '+fmtTime(span)+' OF VIDEO. DRAG OFFSET FOR AN INTRO.');
 }
-$('ytSyncBtn').addEventListener('click',()=>{
-  if(!yt.player||!yt.player.getCurrentTime) return;
-  setOffset(yt.player.getCurrentTime());
+/* One tap: no need to play to beat one. Assume the song starts with the video
+   (offset 0) and scale the tempo to fit the full duration. waitForDuration
+   covers the case where the button is tapped before the player reports a
+   duration (getDuration() reads 0 until the video has loaded). */
+$('ytSyncBtn').addEventListener('click',async()=>{
+  if(!yt.player||!yt.player.getCurrentTime){ setStatus('ATTACH A YOUTUBE VIDEO FIRST.'); return; }
+  if(!st.song){ setStatus('LOAD OR IMPORT A CHORD CHART FIRST — PROCESS SETS ITS TEMPO TO FIT THE VIDEO.'); return; }
+  const btn=$('ytSyncBtn'), label=btn.textContent;
+  btn.disabled=true; btn.textContent='⚙ Processing…';
+  await waitForDuration(yt.videoId,3000);
+  btn.textContent=label; btn.disabled=false;
+  if(!(yt.player&&yt.player.getDuration&&yt.player.getDuration()>0)){ setStatus('VIDEO STILL LOADING — TRY AGAIN IN A MOMENT.'); return; }
+  setOffset(0);
   autoScaleTempo();
 });
 $('ytOffDown').addEventListener('click',()=>setOffset(yt.offset-0.1));
 $('ytOffUp').addEventListener('click',()=>setOffset(yt.offset+0.1));
-$('ytBpmDown').addEventListener('click',()=>{ if(st.song){st.song.bpm=Math.max(30,songBpm()-1);updateChips();updateYtBpmLcd();refreshNow(true);} });
-$('ytBpmUp').addEventListener('click',()=>{ if(st.song){st.song.bpm=Math.min(300,songBpm()+1);updateChips();updateYtBpmLcd();refreshNow(true);} });
+$('ytBpmDown').addEventListener('click',()=>setSongBpm(songBpm()-1));
+$('ytBpmUp').addEventListener('click',()=>setSongBpm(songBpm()+1));
+/* Drag-to-adjust: press and slide left/right on a readout window to change its
+   value coarsely; the ± buttons stay for fine tuning. Pointer Events unify
+   mouse + touch, and touch-action:none (in CSS) stops the page scrolling under
+   the drag on mobile. Moves are rAF-coalesced like the panel sheen effect. */
+function wireLcdDrag(el,get,set,perPx){
+  if(!el) return;
+  let dragging=false,startX=0,startVal=0,pendX=0,raf=0;
+  const apply=()=>{ raf=0; set(startVal+(pendX-startX)*perPx); };
+  el.addEventListener('pointerdown',e=>{
+    if(e.button&&e.button!==0) return;
+    dragging=true; startX=e.clientX; pendX=e.clientX; startVal=get();
+    el.classList.add('dragging');
+    try{el.setPointerCapture(e.pointerId);}catch(_){}
+    e.preventDefault();
+  });
+  el.addEventListener('pointermove',e=>{
+    if(!dragging) return;
+    pendX=e.clientX;
+    if(!raf) raf=requestAnimationFrame(apply);
+  });
+  const end=e=>{
+    if(!dragging) return;
+    dragging=false; el.classList.remove('dragging');
+    if(raf){ cancelAnimationFrame(raf); apply(); }   // commit the final position, don't drop it
+    try{el.releasePointerCapture(e.pointerId);}catch(_){}
+  };
+  el.addEventListener('pointerup',end);
+  el.addEventListener('pointercancel',end);
+}
+wireLcdDrag($('ytOffCell'),()=>yt.offset,v=>setOffset(v),0.05);
+wireLcdDrag($('ytBpmCell'),()=>songBpm(),v=>setSongBpm(v),0.5);
 
 /* ── experimental: estimate real tempo/downbeat by listening through the mic
    while the video plays through speakers. Reuses the same FFT onset/tempo
@@ -3055,44 +3109,61 @@ $('ytBpmUp').addEventListener('click',()=>{ if(st.song){st.song.bpm=Math.min(300
    signal analysis, not a static guess — but noise/room-dependent, hence "experimental". */
 async function listenForBeat(){
   if(!yt.player||!yt.player.getCurrentTime){ setStatus('ATTACH A YOUTUBE VIDEO FIRST.'); return; }
+  if(!st.song){ setStatus('LOAD OR IMPORT A CHORD CHART FIRST — LISTEN SETS ITS TEMPO.'); return; }
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia||typeof MediaRecorder==='undefined'){
-    setStatus('MIC RECORDING ISN’T SUPPORTED IN THIS BROWSER.'); return;
+    setStatus('MIC RECORDING ISN’T SUPPORTED IN THIS BROWSER — USE ⚙ PROCESS SONG INSTEAD.'); return;
   }
-  if(!ensureCtx()) return;
+  if(!ensureCtx()){ setStatus('AUDIO ENGINE UNAVAILABLE — CAN’T LISTEN FOR THE BEAT.'); return; }
   const btn=$('ytListenBtn'); const label=btn.textContent;
   let stream;
   try{ stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,autoGainControl:false,noiseSuppression:false}}); }
   catch(e){ setStatus('MIC ACCESS DENIED — CAN’T LISTEN FOR THE BEAT.'); return; }
   const startedAt=yt.player.getCurrentTime();
-  const rec=new MediaRecorder(stream);
+  // Record in a container this same browser can decode back: Safari only does
+  // audio/mp4, Chrome/Firefox prefer webm/opus. Picking the wrong one is the
+  // classic cause of a decodeAudioData EncodingError on the way back in.
+  let mime='';
+  if(MediaRecorder.isTypeSupported){
+    mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/aac'].find(t=>MediaRecorder.isTypeSupported(t))||'';
+  }
+  const rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);
   const chunks=[];
   rec.ondataavailable=e=>{ if(e.data&&e.data.size) chunks.push(e.data); };
   const stopped=new Promise(res=>{ rec.onstop=res; });
   btn.disabled=true;
-  rec.start();
-  const DUR=15;
-  for(let s=DUR;s>0;s--){ btn.textContent='🎤 Listening… '+s+'s'; await new Promise(r=>setTimeout(r,1000)); }
-  rec.stop();
-  await stopped;
-  stream.getTracks().forEach(t=>t.stop());
-  btn.textContent='🎤 Analyzing…';
   try{
-    const blob=new Blob(chunks,{type:rec.mimeType||'audio/webm'});
+    rec.start();
+    const DUR=(typeof window.__listenDur==='number'&&window.__listenDur>0)?window.__listenDur:15;  // test hook
+    const step=Math.min(1,DUR);
+    for(let left=DUR;left>0;left-=step){ btn.textContent='🎤 Listening… '+Math.ceil(left)+'s'; await new Promise(r=>setTimeout(r,step*1000)); }
+    rec.stop();
+    await stopped;
+    stream.getTracks().forEach(t=>t.stop());
+    btn.textContent='🎤 Analyzing…';
+    const totalSize=chunks.reduce((n,c)=>n+(c.size||0),0);
+    if(!totalSize){ setStatus('NO AUDIO CAPTURED — CHECK THE MIC AND THE PHONE’S VOLUME, THEN TRY AGAIN.'); return; }
+    const blob=new Blob(chunks,{type:rec.mimeType||mime||'audio/webm'});
     const arr=await blob.arrayBuffer();
     const buf=await ctx.decodeAudioData(arr);
     const result=await analyzeBuffer(buf,()=>{});
     if(!result.bpm){
       setStatus('COULDN’T LOCK A TEMPO FROM THAT LISTEN — TRY SOMEWHERE QUIETER, OR USE ⚙ PROCESS SONG.');
     }else{
-      st.song.bpm=Math.max(30,Math.min(300,result.bpm));
-      updateChips(); updateYtBpmLcd();
+      setSongBpm(result.bpm);
       setOffset(Math.max(0,startedAt+(result.phaseSec||0)));
-      setStatus('LISTENED IN — '+Math.round(result.bpm)+' BPM, DOWNBEAT SET FROM THE MIC (EXPERIMENTAL).');
+      setStatus('LISTENED IN — '+Math.round(songBpm())+' BPM, DOWNBEAT SET FROM THE MIC (EXPERIMENTAL).');
     }
   }catch(e){
-    setStatus('LISTEN FAILED — '+((e&&e.message)||'COULD NOT ANALYZE THE RECORDING')+'.');
+    try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){}
+    const name=(e&&e.name)||'';
+    if(name==='EncodingError'||name==='NotSupportedError'){
+      setStatus('LISTEN FAILED ('+name+') — THIS BROWSER CAN’T DECODE ITS OWN MIC RECORDING. USE ⚙ PROCESS SONG + DRAG.');
+    }else{
+      setStatus('LISTEN FAILED — '+((e&&e.message)||'COULD NOT ANALYZE THE RECORDING')+'.');
+    }
+  }finally{
+    btn.textContent=label; btn.disabled=false;
   }
-  btn.textContent=label; btn.disabled=false;
 }
 $('ytListenBtn').addEventListener('click',listenForBeat);
 

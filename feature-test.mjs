@@ -24,10 +24,16 @@ const ui = await page.evaluate(() => {
     themeBtnGone: !document.getElementById('themeBtn'),
     ytKeyBtnGone: !document.getElementById('ytKeyBtn'),
     inspectorGone: !document.getElementById('inspector'),
-    stageFlowsCorrectly: before(el('ytPanel'), el('nowPlaying')) && before(el('nowPlaying'), el('transport'))
-      && before(el('transport'), el('crt')) && before(el('crt'), el('rack')),
+    stageFlowsCorrectly: before(el('ytPanel'), el('transport')) && before(el('transport'), el('nowPlaying'))
+      && before(el('nowPlaying'), el('crt')) && before(el('crt'), el('rack')),
     togglesInTransport: document.getElementById('transport').contains(document.getElementById('simplifySw'))
       && document.getElementById('transport').contains(document.getElementById('miniDiagSw')),
+    instTabsPlacement: (() => {
+      const it = document.getElementById('instTabs');
+      return !!it && el('ytPanel').contains(it) && !el('ytStage').contains(it)
+        && before(it, el('ytSyncBtn')) && getComputedStyle(it).display !== 'none';
+    })(),
+    onlyOneInstTabs: document.querySelectorAll('.inst-tabs').length === 1,
     lyricsDisplay: getComputedStyle(document.getElementById('lyrics')).display,
     gridDisplay: getComputedStyle(document.getElementById('grid')).display,
     viewTabsGone: !document.getElementById('viewTabs') && !document.getElementById('viewPerf'),
@@ -37,10 +43,13 @@ ui.tag.includes('Colton.ink') && ui.title.includes('Colton.ink') && !ui.tag.incl
   ? ok('rebranded to Colton.ink (header + title)') : bad('branding: ' + JSON.stringify([ui.tag, ui.title]));
 ui.themeBtnGone && ui.ytKeyBtnGone ? ok('themeBtn and ytKeyBtn removed from main page') : bad('stale buttons remain');
 ui.inspectorGone ? ok('desktop inspector column removed') : bad('#inspector still present');
-ui.stageFlowsCorrectly ? ok('stage order: search → now playing → controls → split view → rack')
+ui.stageFlowsCorrectly ? ok('stage order: search → controls → now playing → split view → rack')
   : bad('stage order wrong');
 ui.togglesInTransport ? ok('simplify/mini-diagram toggles live in the control board')
   : bad('display toggles not inside #transport');
+ui.instTabsPlacement && ui.onlyOneInstTabs
+  ? ok('instrument tabs sit above ⚙ Process Song and stay visible before a video is attached')
+  : bad('inst-tabs placement: ' + JSON.stringify(ui));
 ui.viewTabsGone ? ok('grid/lyrics/perf tabs removed') : bad('leftover view tabs found');
 ui.lyricsDisplay !== 'none' && ui.gridDisplay !== 'none'
   ? ok('lyrics and chords panes are both visible at once (split screen)')
@@ -227,11 +236,12 @@ ytLyrResult.msg.includes('LYRICS') && ytLyrResult.lines > 20
   ? ok(`⇣ Fetch Lyrics button (next to YouTube search) fetches on demand: ${ytLyrResult.lines} lines`)
   : bad('ytLyrBtn fetch result: ' + JSON.stringify(ytLyrResult));
 
-// --- Process Song: auto-scale tempo to the video's real length, one-tap sync -
+// --- Process Song: ONE TAP → offset 0 + auto-scale tempo to the video's length
 await page.evaluate(loadTestSong);
 const process1 = await page.evaluate(async () => {
-  // 16 beats (the test song) over an 8s span (13s duration − 5s offset) = 120bpm —
-  // chosen to land well inside the [30,300] sanity clamp, not against its floor.
+  // 16 beats over the full 13s duration (offset now defaults to 0, not a tapped
+  // downbeat) = ~73.8bpm — inside the [30,300] clamp. getCurrentTime is 5, which
+  // must NOT be captured as the offset anymore.
   window.YT = { Player: function (el, opts) {
     this.getCurrentTime = () => 5; this.getDuration = () => 13; this.setPlaybackRate = () => {};
     setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
@@ -242,24 +252,127 @@ const process1 = await page.evaluate(async () => {
   await new Promise(r => setTimeout(r, 30));
   const shArtistAfterAttach = document.getElementById('shArtist').textContent;
   document.getElementById('ytSyncBtn').click();
+  await new Promise(r => setTimeout(r, 80));   // handler is async (awaits waitForDuration)
   return {
     shArtistAfterAttach,
     bpm: st.song.bpm,
     offset: CFY.yt.offset,
-    expectedBpm: totalBefore * 60 / (13 - 5),
+    expectedBpm: totalBefore * 60 / 13,
     ytBpmLcd: document.getElementById('ytBpmLcd').textContent,
   };
 });
 process1.shArtistAfterAttach === '▶ TEST VIDEO TITLE — TEST CHANNEL'
   ? ok('Now Playing artist line updates to the attached YouTube title + channel')
   : bad('shArtist after attach: ' + process1.shArtistAfterAttach);
-process1.offset === 5 ? ok('⚙ Process Song captures the downbeat tap as offset') : bad('offset: ' + process1.offset);
+process1.offset === 0
+  ? ok('⚙ Process Song auto-sets offset to 0 — one tap, no downbeat timing required')
+  : bad('offset should be 0 (not the playhead), got: ' + process1.offset);
 Math.abs(process1.bpm - process1.expectedBpm) < 0.01
-  ? ok(`⚙ Process Song auto-scales BPM to fit the video's real length (${process1.bpm.toFixed(1)} bpm)`)
+  ? ok(`⚙ Process Song auto-scales BPM to span the full video length (${process1.bpm.toFixed(1)} bpm)`)
   : bad(`auto-scale bpm: got ${process1.bpm}, expected ${process1.expectedBpm}`);
 process1.ytBpmLcd === String(Math.round(process1.bpm))
-  ? ok('BPM readout (replacing the old Tap Tempo button) reflects the auto-scaled value')
+  ? ok('BPM readout reflects the auto-scaled value')
   : bad('ytBpmLcd: ' + process1.ytBpmLcd);
+
+// Process Song works even when tapped before the player reports a duration
+// (getDuration() reads 0 until loaded) — the handler awaits waitForDuration.
+const processWait = await page.evaluate(async () => {
+  let t0 = null;
+  window.YT = { Player: function (el, opts) {
+    this.getCurrentTime = () => 0;
+    this.getDuration = () => { if (t0 === null) t0 = performance.now(); return (performance.now() - t0 > 160) ? 20 : 0; };
+    this.setPlaybackRate = () => {};
+    setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
+  }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
+  window.loadYtApi = () => Promise.resolve();
+  const total = totalUnits();
+  await ytAttach('vid-wait-test', 'Wait Video', 'Chan');
+  await new Promise(r => setTimeout(r, 30));
+  document.getElementById('ytSyncBtn').click();
+  await new Promise(r => setTimeout(r, 500));   // let waitForDuration poll past the 160ms stub gap
+  return { bpm: st.song.bpm, expected: total * 60 / 20 };
+});
+Math.abs(processWait.bpm - processWait.expected) < 0.01
+  ? ok('⚙ Process Song waits for the duration when tapped early, then scales correctly')
+  : bad(`waitForDuration path: got ${processWait.bpm}, expected ${processWait.expected}`);
+
+// Guards: no video attached, and no chart loaded, both give a helpful status
+const processGuards = await page.evaluate(async () => {
+  ytDetach(true);
+  document.getElementById('ytSyncBtn').click();
+  await new Promise(r => setTimeout(r, 20));
+  const noVideo = document.getElementById('statusTxt').textContent;
+  // now attach a video but clear the chart
+  window.YT = { Player: function (el, opts) {
+    this.getCurrentTime = () => 0; this.getDuration = () => 100; this.setPlaybackRate = () => {};
+    setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
+  }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
+  window.loadYtApi = () => Promise.resolve();
+  await ytAttach('vid-guard', 'Guard Video', 'Chan');
+  await new Promise(r => setTimeout(r, 30));
+  st.song = null; st.cells = [];
+  document.getElementById('ytSyncBtn').click();
+  await new Promise(r => setTimeout(r, 60));
+  const noChart = document.getElementById('statusTxt').textContent;
+  return { noVideo, noChart };
+});
+processGuards.noVideo.includes('ATTACH A YOUTUBE VIDEO')
+  ? ok('⚙ Process Song with no video attached asks the user to attach one')
+  : bad('no-video guard status: ' + processGuards.noVideo);
+processGuards.noChart.includes('CHORD CHART FIRST')
+  ? ok('⚙ Process Song with no chart loaded asks the user to load one')
+  : bad('no-chart guard status: ' + processGuards.noChart);
+await page.evaluate(loadTestSong);   // restore a chart for the drag tests below
+
+// --- Drag-to-adjust the OFFSET / BPM readout windows -------------------------
+const dragOff = await page.evaluate(async () => {
+  CFY.yt.offset = 2; document.getElementById('ytOffLcd').textContent = '2.00';
+  const cell = document.getElementById('ytOffCell');
+  const fire = (type, x) => cell.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: 0, bubbles: true, pointerId: 1, button: 0 }));
+  fire('pointerdown', 100); fire('pointermove', 200);       // +100px * 0.05 = +5.0s
+  await new Promise(r => setTimeout(r, 40)); fire('pointerup', 200);
+  const afterRight = CFY.yt.offset, lcdRight = document.getElementById('ytOffLcd').textContent;
+  fire('pointerdown', 100); fire('pointermove', -100000);   // drag far left → clamp at 0
+  await new Promise(r => setTimeout(r, 40)); fire('pointerup', -100000);
+  return { afterRight, lcdRight, afterClamp: CFY.yt.offset };
+});
+Math.abs(dragOff.afterRight - 7) < 0.01 && dragOff.lcdRight === '7.00'
+  ? ok(`dragging the OFFSET window adjusts it (2.00→${dragOff.lcdRight}s) and the ± buttons still fine-tune`)
+  : bad('offset drag: ' + JSON.stringify(dragOff));
+dragOff.afterClamp === 0
+  ? ok('dragging OFFSET below zero clamps at 0')
+  : bad('offset clamp: ' + dragOff.afterClamp);
+
+const dragBpm = await page.evaluate(async () => {
+  st.song.bpm = 100; updateYtBpmLcd();
+  const cell = document.getElementById('ytBpmCell');
+  const fire = (type, x) => cell.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: 0, bubbles: true, pointerId: 1, button: 0 }));
+  fire('pointerdown', 100); fire('pointermove', 200);       // +100px * 0.5 = +50 bpm
+  await new Promise(r => setTimeout(r, 40)); fire('pointerup', 200);
+  const afterRight = st.song.bpm, lcdRight = document.getElementById('ytBpmLcd').textContent;
+  fire('pointerdown', 100); fire('pointermove', 100000);    // clamp high
+  await new Promise(r => setTimeout(r, 40)); fire('pointerup', 100000);
+  const clampHigh = st.song.bpm;
+  fire('pointerdown', 100); fire('pointermove', -100000);   // clamp low
+  await new Promise(r => setTimeout(r, 40)); fire('pointerup', -100000);
+  const clampLow = st.song.bpm;
+  // no throw when no chart is loaded
+  const prevSong = st.song; st.song = null;
+  let threw = false;
+  try { fire('pointerdown', 100); fire('pointermove', 200); await new Promise(r => setTimeout(r, 40)); fire('pointerup', 200); }
+  catch (e) { threw = true; }
+  st.song = prevSong;
+  return { afterRight, lcdRight, clampHigh, clampLow, threw };
+});
+Math.abs(dragBpm.afterRight - 150) < 0.01 && dragBpm.lcdRight === '150'
+  ? ok(`dragging the BPM window adjusts it (100→${dragBpm.lcdRight} bpm)`)
+  : bad('bpm drag: ' + JSON.stringify(dragBpm));
+dragBpm.clampHigh === 300 && dragBpm.clampLow === 30
+  ? ok('dragging BPM clamps to the [30, 300] range')
+  : bad('bpm clamp: high=' + dragBpm.clampHigh + ' low=' + dragBpm.clampLow);
+dragBpm.threw === false
+  ? ok('dragging BPM with no chart loaded is a safe no-op (no crash)')
+  : bad('bpm drag threw with st.song null');
 
 await page.evaluate(() => { CFY.yt.player.getCurrentTime = () => 5; ytDetach(false); });
 const shArtistAfterDetach = await page.evaluate(() => document.getElementById('shArtist').textContent);
@@ -320,13 +433,37 @@ typeof beatDetect.phaseSec === 'number' && beatDetect.phaseSec >= 0 && beatDetec
   : bad('phaseSec out of range: ' + JSON.stringify(beatDetect));
 
 // --- 🎤 Listen for Beat: experimental mic-based tempo/downbeat estimation -----
+// helper: wait until the button label is restored (the whole flow finished)
+const waitListenDone = () => page.evaluate(async () => {
+  for (let i = 0; i < 60 && !document.getElementById('ytListenBtn').textContent.includes('Listen for Beat'); i++)
+    await new Promise(r => setTimeout(r, 50));
+});
+
+// (a) Regression: with NO chord chart loaded it must NOT crash (it used to throw
+//     writing st.song.bpm and surface a bogus "LISTEN FAILED").
+const listenNoChart = await page.evaluate(async () => {
+  st.song = null; st.cells = [];
+  CFY.yt.videoId = 'vid-listen-nochart';
+  CFY.yt.player = { getCurrentTime: () => 5 };
+  let threw = false;
+  try { document.getElementById('ytListenBtn').click(); await new Promise(r => setTimeout(r, 80)); }
+  catch (e) { threw = true; }
+  return { threw, status: document.getElementById('statusTxt').textContent,
+           btnRestored: document.getElementById('ytListenBtn').textContent.includes('Listen for Beat') };
+});
+!listenNoChart.threw && listenNoChart.status.includes('CHORD CHART FIRST') && listenNoChart.btnRestored
+  ? ok('🎤 Listen for Beat with no chart loaded is guarded (no crash, asks to load a chart)')
+  : bad('listen no-chart guard: ' + JSON.stringify(listenNoChart));
+
+// (b) Mic permission denied → graceful message, button restored
+await page.evaluate(loadTestSong);
 const listenDenied = await page.evaluate(async () => {
   CFY.yt.videoId = 'vid-listen-test';
   CFY.yt.player = { getCurrentTime: () => 5 };
   const origGUM = navigator.mediaDevices.getUserMedia;
   navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
   document.getElementById('ytListenBtn').click();
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 200));
   const status = document.getElementById('statusTxt').textContent;
   const btnRestored = document.getElementById('ytListenBtn').textContent.includes('Listen for Beat');
   navigator.mediaDevices.getUserMedia = origGUM;
@@ -335,6 +472,69 @@ const listenDenied = await page.evaluate(async () => {
 listenDenied.status.includes('MIC ACCESS DENIED') && listenDenied.btnRestored
   ? ok('🎤 Listen for Beat degrades gracefully when mic permission is denied')
   : bad('mic-denial handling: ' + JSON.stringify(listenDenied));
+
+// (c) Success path — stub getUserMedia + MediaRecorder + decodeAudioData with a
+//     synthetic 120bpm click track; the REAL analyzeBuffer/estimateTempo runs.
+await page.evaluate(loadTestSong);
+await page.evaluate(async () => {
+  CFY.yt.videoId = 'vid-listen-ok';
+  CFY.yt.player = { getCurrentTime: () => 10 };
+  window.__origGUM = navigator.mediaDevices.getUserMedia;
+  window.__origMR = window.MediaRecorder;
+  window.__origDecode = ctx.decodeAudioData;
+  navigator.mediaDevices.getUserMedia = () => Promise.resolve({ getTracks: () => [{ stop() {} }] });
+  window.MediaRecorder = class {
+    constructor(stream, opts) { this.stream = stream; this.mimeType = (opts && opts.mimeType) || 'audio/webm'; this.ondataavailable = null; this.onstop = null; }
+    start() {}
+    stop() { if (this.ondataavailable) this.ondataavailable({ data: new Blob(['x'.repeat(2048)]) }); if (this.onstop) this.onstop(); }
+  };
+  ctx.decodeAudioData = () => {
+    const sr = 22050, dur = 12, beatSec = 0.5;
+    const buf = ctx.createBuffer(1, sr * dur, sr);
+    const d = buf.getChannelData(0);
+    for (let t = 0.2; t < dur; t += beatSec) { const s = Math.floor(t * sr); for (let i = 0; i < 400; i++) if (s + i < d.length) d[s + i] += Math.sin(i * 0.5) * Math.exp(-i / 60); }
+    return Promise.resolve(buf);
+  };
+  window.__listenDur = 0.05;
+  document.getElementById('ytListenBtn').click();
+});
+await waitListenDone();
+const listenOk = await page.evaluate(() => {
+  const res = { bpm: st.song.bpm, offset: CFY.yt.offset, status: document.getElementById('statusTxt').textContent,
+                btnRestored: document.getElementById('ytListenBtn').textContent.includes('Listen for Beat') };
+  navigator.mediaDevices.getUserMedia = window.__origGUM; window.MediaRecorder = window.__origMR; ctx.decodeAudioData = window.__origDecode;
+  delete window.__listenDur;
+  return res;
+});
+listenOk.bpm && Math.abs(listenOk.bpm - 120) < 6 && listenOk.offset >= 10 && listenOk.btnRestored
+  ? ok(`🎤 Listen for Beat success path locks a tempo (${Math.round(listenOk.bpm)} bpm) and sets the downbeat`)
+  : bad('listen success path: ' + JSON.stringify(listenOk));
+
+// (d) Empty recording (no chunks) → clear "NO AUDIO CAPTURED", not a cryptic decode error
+await page.evaluate(loadTestSong);
+await page.evaluate(async () => {
+  CFY.yt.videoId = 'vid-listen-empty';
+  CFY.yt.player = { getCurrentTime: () => 3 };
+  window.__origGUM = navigator.mediaDevices.getUserMedia;
+  window.__origMR = window.MediaRecorder;
+  navigator.mediaDevices.getUserMedia = () => Promise.resolve({ getTracks: () => [{ stop() {} }] });
+  window.MediaRecorder = class {
+    constructor() { this.ondataavailable = null; this.onstop = null; this.mimeType = 'audio/webm'; }
+    start() {} stop() { if (this.onstop) this.onstop(); }   // emit NO chunks
+  };
+  window.__listenDur = 0.05;
+  document.getElementById('ytListenBtn').click();
+});
+await waitListenDone();
+const listenEmpty = await page.evaluate(() => {
+  const res = { status: document.getElementById('statusTxt').textContent,
+                btnRestored: document.getElementById('ytListenBtn').textContent.includes('Listen for Beat') };
+  navigator.mediaDevices.getUserMedia = window.__origGUM; window.MediaRecorder = window.__origMR; delete window.__listenDur;
+  return res;
+});
+listenEmpty.status.includes('NO AUDIO CAPTURED') && listenEmpty.btnRestored
+  ? ok('🎤 Listen for Beat reports "no audio captured" instead of a cryptic decode error')
+  : bad('listen empty-recording: ' + JSON.stringify(listenEmpty));
 
 // --- search fallback without an API key --------------------------------------
 const search = await page.evaluate(async () => {
