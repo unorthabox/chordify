@@ -615,6 +615,38 @@ listenEmpty.status.includes('NO AUDIO CAPTURED') && listenEmpty.btnRestored
   ? ok('🎤 Listen for Beat reports "no audio captured" instead of a cryptic decode error')
   : bad('listen empty-recording: ' + JSON.stringify(listenEmpty));
 
+// --- tuner: readout opacity tracks signal, holds + fades instead of blanking --
+const tunerFade = await page.evaluate(async () => {
+  if (!ensureCtx()) return { err: 'no ctx' };
+  micBuf = new Float32Array(8192);
+  let signal = true;
+  micAnalyser = { getFloatTimeDomainData(b) {
+    const w = 2 * Math.PI * 440 / ctx.sampleRate;
+    for (let i = 0; i < b.length; i++) b[i] = signal ? Math.sin(i * w) * 0.15 : 0;
+  } };
+  const step = () => { tunerLoop(); cancelAnimationFrame(tunerRaf); tunerRaf = null; };
+  const note = () => document.getElementById('tunNote').textContent;
+  const op = () => parseFloat(document.getElementById('tunNote').style.opacity);
+  for (let i = 0; i < 8; i++) step();                    // loud 440Hz sine
+  const loud = { note: note(), op: op() };
+  signal = false;
+  for (let i = 0; i < 8; i++) step();                    // signal stops
+  const fading = { note: note(), op: op() };
+  for (let i = 0; i < 150; i++) step();                  // fade completes
+  const cleared = { note: note(), op: op() };
+  micAnalyser = null; micBuf = null;                     // restore
+  return { loud, fading, cleared };
+});
+tunerFade.loud && tunerFade.loud.note.startsWith('A') && tunerFade.loud.op > 0.8
+  ? ok(`tuner shows A4 at high opacity while the note is loud (${tunerFade.loud.op})`)
+  : bad('tuner loud state: ' + JSON.stringify(tunerFade));
+tunerFade.fading && tunerFade.fading.note.startsWith('A') && tunerFade.fading.op < tunerFade.loud.op
+  ? ok(`tuner holds the last note and fades when the signal stops (${tunerFade.loud.op}→${tunerFade.fading.op})`)
+  : bad('tuner fade state: ' + JSON.stringify(tunerFade));
+tunerFade.cleared && tunerFade.cleared.note.startsWith('--') && Math.abs(tunerFade.cleared.op - 0.55) < 0.01
+  ? ok('tuner clears to the dim idle display only after the fade completes')
+  : bad('tuner cleared state: ' + JSON.stringify(tunerFade));
+
 // --- search fallback without an API key --------------------------------------
 const search = await page.evaluate(async () => {
   try { const r = await ytSearch('wonderwall oasis'); return { n: r.length, first: r[0] }; }
