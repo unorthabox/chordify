@@ -142,3 +142,34 @@ should come up fullscreen with no browser chrome.
   this box (no ImageMagick, no Pillow), so that needs a plan.
 
 - **This is not a git repo yet.** `index.html.orig` is your only undo.
+
+---
+
+## Audio for chord detection — no computer required (2026-07-12)
+
+Chord detection runs in the browser, but it needs the song's raw audio, and a
+browser can't pull that off YouTube (no CORS, ciphered streams). That used to mean
+a computer at home running `grab-server.mjs` behind a Tailscale/cloudflared tunnel.
+It doesn't anymore.
+
+**The phone does it itself.** a-Shell (free App Store terminal) runs `yt-dlp` on the
+iPhone; a Shortcut named `Chordify Grab` wires it up. ⚙ Process Song on a video with
+no chart opens a two-step panel: **1 Grab Audio** deep-links to the Shortcut, which
+downloads the m4a and bounces back to `…/#grabbed`; **2 Chart It** picks that file and
+runs the normal analyzer. Setup is in `SETUP-PHONE.md` and mirrored in-app (the panel's
+SET IT UP link → `#guide` overlay). $0, no server, no account.
+
+Two things worth knowing:
+- **The file-picker tap is not removable.** iOS Safari has no Web Share Target, so a
+  Shortcut cannot hand a file to a web app. And a server *on* the phone is out too —
+  iOS Safari blocks HTTPS pages from fetching `http://127.0.0.1` (WebKit bug 171934,
+  open since 2017), unlike every other browser.
+- **The iOS download stack is load-bearing and churns.** `yt-dlp-apple-webkit-jsi` is
+  what solves YouTube's JS challenge using Apple's built-in JS engine (iOS forbids
+  shipping your own). When YouTube changes something, re-running the `pip install -U`
+  line in a-Shell is almost always the whole fix.
+
+`grab-server.mjs` survives as a **desktop** convenience only — run it, and Process Song
+is one tap with no file picking (`127.0.0.1:8934`, or any URL you put in ⚙ Settings).
+Its `--tunnel` flag and `setup-grabber-service.sh` are gone: they existed only to reach
+a home machine from the phone, which is the thing we no longer do.

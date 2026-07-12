@@ -321,15 +321,73 @@ const processGuards = await page.evaluate(async () => {
   window.fetch = origFetch;
   const noChart = document.getElementById('statusTxt').textContent;
   return { noVideo, noChart, noSongCreated: !st.song,
+           panelOpen: document.getElementById('grabPanel').classList.contains('open'),
+           shortcutUrl: grabShortcutUrl('vid-guard0000'),
            btnRestored: document.getElementById('ytSyncBtn').textContent.includes('Process Song') };
 });
 processGuards.noVideo.includes('ATTACH A YOUTUBE VIDEO')
   ? ok('⚙ Process Song with no video attached asks the user to attach one')
   : bad('no-video guard status: ' + processGuards.noVideo);
-processGuards.noChart.includes('GRABBER') && processGuards.noChart.includes('SETTINGS')
+processGuards.panelOpen && processGuards.noChart.includes('GRAB AUDIO')
   && processGuards.noSongCreated && processGuards.btnRestored
-  ? ok('⚙ Process Song auto-chart degrades gracefully, pointing at Settings for phone setup')
-  : bad('grabber-down fallback: ' + JSON.stringify(processGuards));
+  ? ok('⚙ Process Song with no grabber opens the phone grab panel (no server needed)')
+  : bad('no-grabber fallback: ' + JSON.stringify(processGuards));
+processGuards.shortcutUrl.startsWith('shortcuts://run-shortcut?name=Chordify%20Grab')
+  && processGuards.shortcutUrl.includes(encodeURIComponent('https://www.youtube.com/watch?v=vid-guard0000'))
+  ? ok('grab step 1 deep-links the Chordify Grab shortcut with the video URL')
+  : bad('shortcut deep link: ' + processGuards.shortcutUrl);
+
+// --- grab step 2: the picked file charts the attached video ------------------
+const grabImport = await page.evaluate(async () => {
+  const origDecode = window.chartFromAudioBytes;
+  window.chartFromAudioBytes = async (ab, onProgress) => {   // stand in for the DSP; the detector has its own tests
+    onProgress(0.5);
+    return { res: { bpm: 120, key: 'C', phaseSec: 1.5, chords: [['C', 4], ['G', 4], ['Am', 4], ['F', 4]] } };
+  };
+  st.song = null; st.cells = [];
+  st.imported = []; localStorage.removeItem('cfy_imported');
+  const input = document.getElementById('grabFile');
+  const dt = new DataTransfer();
+  dt.items.add(new File([new Uint8Array(64)], 'cfy-vid-guard0000.m4a', { type: 'audio/mp4' }));
+  input.files = dt.files;
+  input.dispatchEvent(new Event('change'));
+  for (let i = 0; i < 60 && !st.song; i++) await new Promise(r => setTimeout(r, 50));
+  window.chartFromAudioBytes = origDecode;
+  const beats = st.song && st.song.sections[0][1];
+  return {
+    videoId: st.song && st.song.videoId,
+    bpm: st.song && st.song.bpm,
+    beatsAreBeats: !!beats && beats[0][1] === 4 * (120 / 60),   // beat-denominated, not seconds
+    offset: CFY.yt.offset,
+    saved: JSON.parse(localStorage.getItem('cfy_imported') || '[]').length,
+    panelClosed: !document.getElementById('grabPanel').classList.contains('open'),
+    status: document.getElementById('statusTxt').textContent,
+  };
+});
+grabImport.videoId === 'vid-guard0000' && grabImport.bpm === 120 && grabImport.beatsAreBeats
+  && grabImport.saved === 1 && grabImport.panelClosed && grabImport.offset === 1.5
+  && grabImport.status.includes('AUTO-CHARTED')
+  ? ok('grab step 2 charts the picked file, attaches it to the video, and saves it')
+  : bad('grab import: ' + JSON.stringify(grabImport));
+
+// --- returning from the shortcut (#grabbed) puts you on step 2 ---------------
+const grabbedReturn = await page.evaluate(async () => {
+  st.song = null; st.cells = [];
+  st.imported = []; localStorage.removeItem('cfy_imported');
+  localStorage.setItem('cfy_pendgrab', 'vid-guard0000');
+  location.hash = '#grabbed';
+  await new Promise(r => setTimeout(r, 250));   // hashchange → checkGrabbedHash (async: may re-attach)
+  return {
+    panelOpen: document.getElementById('grabPanel').classList.contains('open'),
+    msg: document.getElementById('grabMsg').textContent,
+    pendCleared: !localStorage.getItem('cfy_pendgrab'),
+    hashCleared: location.hash === '',
+  };
+});
+grabbedReturn.panelOpen && grabbedReturn.msg.includes('cfy-vid-guard0000.m4a')
+  && grabbedReturn.pendCleared && grabbedReturn.hashCleared
+  ? ok('returning from the grab shortcut (#grabbed) reopens the panel on step 2')
+  : bad('#grabbed return: ' + JSON.stringify(grabbedReturn));
 
 // --- one button: Process Song fetches lyrics when missing, skips when cached --
 const oneBtn = await page.evaluate(async () => {

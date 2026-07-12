@@ -1,7 +1,7 @@
 // Chordify offline shell.
 // Bump VERSION only to force-evict; routine edits to index.html propagate on
 // their own via the stale-while-revalidate below.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = 'chordify-' + VERSION;
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-180.png'];
 

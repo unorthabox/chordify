@@ -51,6 +51,27 @@
 .st-key .field{flex:1;min-width:0}
 .st-hint{font-size:8.5px;letter-spacing:.08em;color:var(--ink-3);margin-top:5px}
 #stMsg{font-family:var(--crt);font-size:13px;min-height:1.2em;color:var(--phos)}
+/* ── Phone grab: the two-step panel shown when no grabber answers ── */
+#grabPanel{display:none;flex-direction:column;gap:7px;padding:9px;border:1px solid var(--ink-3);border-radius:6px}
+#grabPanel.open{display:flex}
+#grabPanel .step{display:flex;gap:7px;align-items:center}
+#grabPanel .step .btn{flex:1}
+#grabPanel .num{font-family:var(--crt);font-size:15px;color:var(--cyan);width:1em;text-align:center}
+#grabMsg{font-family:var(--crt);font-size:12px;min-height:1.2em;color:var(--phos)}
+/* the setup guide reuses the settings modal shape */
+#guide{position:fixed;inset:0;z-index:81;display:none;place-items:center;padding:18px}
+#guide.open{display:grid}
+#gdScrim{position:fixed;inset:0;z-index:0;background:rgba(2,6,3,.62);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+#guide .gd-step{margin-bottom:13px}
+#guide .gd-step h5{margin:0 0 5px;font-size:10px;font-weight:600;letter-spacing:.14em;
+  color:var(--cyan);text-transform:uppercase}
+#guide p{margin:0 0 5px;font-size:9.5px;letter-spacing:.06em;line-height:1.75;color:var(--ink-2);text-transform:uppercase}
+#guide code{display:block;font-family:var(--crt);font-size:12px;color:var(--phos);text-transform:none;
+  background:rgba(2,6,3,.5);border:1px solid var(--ink-3);border-radius:5px;padding:7px 8px;margin:5px 0;
+  word-break:break-all;-webkit-user-select:all;user-select:all}
+#guide ol{margin:0;padding-left:18px}
+#guide li{font-size:9.5px;letter-spacing:.06em;line-height:1.85;color:var(--ink-2);text-transform:uppercase}
 </style>
 </head>
 <body>
@@ -796,6 +817,20 @@
             <h4>Sync</h4>
             <div id="crtStatus"><span id="statusTxt">SYSTEM READY.</span> <span class="cursor"></span></div>
             <button class="btn big" id="ytSyncBtn">⚙ Process Song</button>
+            <div id="grabPanel">
+              <div class="step">
+                <span class="num">1</span>
+                <button class="btn" id="grabRunBtn">⤓ Grab Audio</button>
+              </div>
+              <div class="step">
+                <span class="num">2</span>
+                <button class="btn" id="grabPickBtn">⤒ Chart It</button>
+                <input type="file" id="grabFile" accept="audio/*,.m4a" hidden>
+              </div>
+              <div id="grabMsg"></div>
+              <div class="hint">1 HANDS THE VIDEO TO THE SHORTCUT — A-SHELL DOWNLOADS IT, THEN COMES BACK HERE.
+                2 PICKS THAT FILE AND CHARTS IT. <a href="#" id="grabHelpLink" style="color:var(--cyan)">FIRST TIME? SET IT UP →</a></div>
+            </div>
             <div class="stepper">
               <button class="btn" id="ytOffDown" aria-label="Offset down 0.1s">−</button>
               <div class="lcd drag" id="ytOffCell" title="Drag left/right to adjust — or use ± for fine tuning"><span class="lbl">◂ OFFSET s ▸</span><span class="val num" id="ytOffLcd">0.00</span></div>
@@ -807,7 +842,7 @@
               <button class="btn" id="ytBpmUp" aria-label="BPM up 1">+</button>
             </div>
             <button class="btn" id="ytDetachBtn">✕ Detach Video</button>
-            <div class="hint">TAP ⚙ PROCESS SONG — IT BUILDS/FITS THE CHORD CHART AND FETCHES THE LYRICS, THEN YOU PLAY. (AUTO-DETECTING CHORDS NEEDS THE GRABBER — SEE ⚙ SETTINGS.) DRAG THE OFFSET WINDOW IF THE SONG STARTS AFTER AN INTRO, OR BPM IF IT DRIFTS (± FOR FINE TUNING). LYRICS WRONG? TAP ✎ IN THE LYRICS PANE.</div>
+            <div class="hint">TAP ⚙ PROCESS SONG — IT BUILDS/FITS THE CHORD CHART AND FETCHES THE LYRICS, THEN YOU PLAY. (ON THE PHONE, A NEW SONG'S AUDIO COMES FROM THE GRAB SHORTCUT — TWO TAPS, NO SERVER.) DRAG THE OFFSET WINDOW IF THE SONG STARTS AFTER AN INTRO, OR BPM IF IT DRIFTS (± FOR FINE TUNING). LYRICS WRONG? TAP ✎ IN THE LYRICS PANE.</div>
           </div>
         </div>
       </div>
@@ -954,6 +989,55 @@
 
   <footer>Property of Colton.ink · <b>Terminal 0077</b> · Unauthorized access will be logged</footer>
 
+  <!-- phone-grab setup guide overlay -->
+  <div id="guide" role="dialog" aria-label="Phone grabber setup">
+    <div id="gdScrim"></div>
+    <div class="tk panel">
+      <div class="tk-head">
+        <h3>⤓ Grab Setup — Phone Only, One Time</h3>
+        <button class="btn" id="gdClose">✕</button>
+      </div>
+      <p>THE BROWSER CAN'T PULL AUDIO OFF YOUTUBE ITSELF, SO THE PHONE DOES IT — NO COMPUTER, NO SERVER, NO COST.
+        SET THIS UP ONCE AND EVERY NEW SONG IS TWO TAPS.</p>
+      <div class="gd-step">
+        <h5>1 · Install a-Shell</h5>
+        <p>FREE ON THE APP STORE — SEARCH "A-SHELL". OPEN IT ONCE.</p>
+      </div>
+      <div class="gd-step">
+        <h5>2 · Install the downloader</h5>
+        <p>PASTE THIS INTO A-SHELL AND HIT RETURN (TAKES A MINUTE):</p>
+        <code>pip install -U "yt-dlp[default]" yt-dlp-ejs yt-dlp-apple-webkit-jsi</code>
+        <p>THE LAST PIECE IS WHAT LETS YOUTUBE DOWNLOADS WORK ON IOS AT ALL.</p>
+      </div>
+      <div class="gd-step">
+        <h5>3 · Build the "Chordify Grab" shortcut</h5>
+        <p>IN THE SHORTCUTS APP, NEW SHORTCUT NAMED EXACTLY <b>Chordify Grab</b>, WITH TWO ACTIONS:</p>
+        <ol>
+          <li>A-SHELL → <b>EXECUTE COMMAND</b>, COMMAND SET TO:</li>
+        </ol>
+        <code>yt-dlp -f 'bestaudio[ext=m4a]/bestaudio' --no-playlist -o '~/Documents/cfy-%(id)s.m4a' "[Shortcut Input]"</code>
+        <ol start="2">
+          <li>URL / OPEN URL → POINT IT BACK AT THIS APP:</li>
+        </ol>
+        <code id="gdReturnUrl"></code>
+        <p>THAT SECOND ACTION BOUNCES YOU BACK HERE WHEN THE DOWNLOAD FINISHES. IF IT LANDS IN SAFARI INSTEAD OF
+          THE HOME-SCREEN APP, JUST SWITCH BACK TO CHORDIFY YOURSELF — STEP 2 IS STILL WAITING. (YOU CAN SKIP
+          THIS ACTION ENTIRELY IF YOU'D RATHER SWITCH BACK BY HAND.)</p>
+      </div>
+      <div class="gd-step">
+        <h5>Using it</h5>
+        <p>TAP <b>1 GRAB AUDIO</b> → THE SHORTCUT RUNS AND A-SHELL DOWNLOADS THE SONG (10–30 SEC — LEAVE IT IN THE FOREGROUND) →
+          YOU LAND BACK HERE → TAP <b>2 CHART IT</b> AND PICK THE <b>cfy-…m4a</b> FILE UNDER A-SHELL ▸ DOCUMENTS.</p>
+      </div>
+      <div class="gd-step">
+        <h5>If it stops working</h5>
+        <p>YOUTUBE CHANGES THINGS EVERY FEW MONTHS. RE-RUN THE INSTALL LINE FROM STEP 2 IN A-SHELL — THAT'S USUALLY THE WHOLE FIX.</p>
+        <p>IF THE YOUTUBE APP HIJACKS THE SCREEN MID-DOWNLOAD, TAP "◀ A-SHELL" TOP-LEFT — THE DOWNLOAD IS STILL RUNNING.</p>
+        <p>IF YOUTUBE ASKS IT TO PROVE IT'S NOT A BOT, SEE SETUP-PHONE.MD FOR THE COOKIES FIX.</p>
+      </div>
+    </div>
+  </div>
+
   <!-- settings overlay -->
   <div id="settings" role="dialog" aria-label="Settings">
     <div id="stScrim"></div>
@@ -976,11 +1060,11 @@
       <div class="st-row st-col">
         <span class="lbl2">Audio grabber URL</span>
         <div class="st-key">
-          <input id="stGrabIn" class="field" type="url" placeholder="blank = this computer (127.0.0.1:8934)" autocomplete="off">
+          <input id="stGrabIn" class="field" type="url" placeholder="optional — desktop helper" autocomplete="off">
           <button class="btn" id="stGrabSave">Save</button>
         </div>
-        <div class="st-hint">FOR AUTO-CHART ON THE PHONE: ON YOUR COMPUTER RUN
-          <b>node grab-server.mjs --tunnel</b> AND PASTE THE https URL IT PRINTS. LEAVE BLANK ON DESKTOP.</div>
+        <div class="st-hint">OPTIONAL, DESKTOP ONLY. ON THE PHONE, PROCESS SONG USES THE GRAB SHORTCUT — NO SERVER, NOTHING TO SET HERE.
+          IF YOU RUN <b>node grab-server.mjs</b> ON A COMPUTER, ITS URL GOES HERE (BLANK TRIES 127.0.0.1:8934) AND AUTO-CHART BECOMES ONE TAP.</div>
         <div id="stGrabMsg"></div>
       </div>
       <div class="st-row st-col">
@@ -3027,6 +3111,7 @@ async function ytAttach(videoId,title,by){
     if(m) loadSong(m);
   }
   const hadSong=!!st.song;   // no bundled song bank — a video alone is enough to attach
+  grabPanelOpen(false);      // a different video means any pending grab is stale
   pause();
   msg.textContent='> LOADING PLAYER…';
   try{ await loadYtApi(); }
@@ -3234,7 +3319,7 @@ $('stGrabSave').addEventListener('click',()=>{
   }catch(e){ $('stGrabMsg').textContent='COULD NOT SAVE: '+e.message; }
 });
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'){ libOpen(false); settingsOpen(false); }
+  if(e.key==='Escape'){ libOpen(false); settingsOpen(false); guideOpen(false); }
 });
 $('ytDetachBtn').addEventListener('click',()=>ytDetach(false));
 function updateYtBpmLcd(){ const el=$('ytBpmLcd'); if(el) el.textContent=Math.round(songBpm()); }
@@ -3259,12 +3344,57 @@ function autoScaleTempo(){
   updateChips(); updateYtBpmLcd(); refreshNow(true);
   setStatus('PROCESSED — TEMPO SET TO '+Math.round(st.song.bpm)+' BPM TO FIT '+fmtTime(span)+' OF VIDEO. DRAG OFFSET FOR AN INTRO.');
 }
-/* ── auto-chart: with no chart loaded, Process Song downloads the attached
-   video's audio via a local helper (grab-server.mjs, yt-dlp under the hood —
-   straight from YouTube, no mirrors) and runs the same chord/tempo detector
-   as file import. The browser can't fetch YouTube audio itself (no CORS,
-   ciphered streams), hence the companion process. Proof of concept. */
+/* ── auto-chart: with no chart loaded, Process Song needs the attached video's
+   raw audio, which the browser itself can't fetch (no CORS, ciphered streams).
+   Two ways in, tried in that order:
+     • an optional grabber (grab-server.mjs, yt-dlp) if one answers — one tap,
+       nice on a desktop where you can leave it running;
+     • the phone flow — a Shortcut hands the video to a-Shell, which runs the
+       same yt-dlp on the phone itself, then bounces back here and you pick the
+       file it saved. No server anywhere, nothing to pay for. (See #guide.)
+   Either way the bytes land in chartCurrentVideoFromBytes and get the same
+   chord/tempo detector as file import. */
 function grabBase(){ try{return localStorage.getItem('cfy_grab')||'http://127.0.0.1:8934';}catch(e){return 'http://127.0.0.1:8934';} }
+/* Chart the currently attached video from raw audio bytes and make it the live
+   song. Beats-denominated (unlike file import's seconds): in play-along mode
+   curPos() returns beats, so beat units keep the grid in lockstep with the
+   video. The decoded buffer is discarded — the video is the band. */
+async function chartCurrentVideoFromBytes(ab,onProgress){
+  const vid=yt.videoId, title=yt.title, by=yt.by;
+  const {res}=await chartFromAudioBytes(ab,onProgress||(()=>{}));
+  if(!res.bpm){ setStatus('COULDN’T LOCK A TEMPO FROM THE AUDIO — IMPORT A CHART AND TAP ⚙ AGAIN TO FIT IT.'); return null; }
+  const perBeat=res.bpm/60;
+  const song={
+    id:'imp'+(++importCount),
+    videoId:vid,
+    title:title||vid,
+    artist:(by?by+' · ':'')+'AUTO-CHARTED',
+    bpm:res.bpm,sig:[4,4],key:res.key,
+    sections:[['DETECTED SIGNAL',res.chords.map(c=>[c[0],c[1]*perBeat])]],
+  };
+  st.imported.push(song); saveImported();
+  renderLibrary();
+  loadSong(song);              // note: this detaches the video…
+  await ytAttach(vid,title,by); // …so re-attach it to the new chart
+  setOffset(Math.max(0,res.phaseSec||0));
+  const nSeg=res.chords.filter(c=>c[0]!=='N.C.').length;
+  setStatus('AUTO-CHARTED — '+nSeg+' CHORDS · '+Math.round(res.bpm)+' BPM · KEY '+res.key+'. DRAG OFFSET/BPM TO FINE-TUNE.');
+  return song;
+}
+/* ── the phone path: hand the video to the "Chordify Grab" shortcut, then take
+   the m4a it leaves in a-Shell's Documents through the file picker. iOS Safari
+   has no Web Share Target, so the handoff back is a file pick — one extra tap,
+   and the price of needing no machine anywhere. */
+function grabPanelOpen(open){
+  const p=$('grabPanel'); if(!p) return;
+  p.classList.toggle('open',!!open);
+  if(open) $('grabMsg').textContent='';
+}
+function grabShortcutUrl(vid){
+  const watch='https://www.youtube.com/watch?v='+vid;
+  return 'shortcuts://run-shortcut?name='+encodeURIComponent('Chordify Grab')
+       + '&input=text&text='+encodeURIComponent(watch);
+}
 async function autoChartFromVideo(btn){
   const vid=yt.videoId, title=yt.title, by=yt.by;
   // processed before? restore the saved chart instead of re-grabbing
@@ -3282,7 +3412,10 @@ async function autoChartFromVideo(btn){
     health=await r.json();
   }catch(e){}
   if(!health||!health.ok){
-    setStatus('AUTO-CHART NEEDS THE GRABBER — ON YOUR COMPUTER RUN node grab-server.mjs (ADD --tunnel FOR PHONE USE) AND SET ITS URL IN ⚙ SETTINGS.');
+    // no helper listening — that's the normal case on a phone. Show the
+    // grab-it-here panel rather than an error.
+    grabPanelOpen(true);
+    setStatus('NO CHART YET — TAP 1 GRAB AUDIO, THEN 2 CHART IT.');
     return;
   }
   btn.textContent='⚙ Downloading…';
@@ -3302,28 +3435,67 @@ async function autoChartFromVideo(btn){
   }else{
     ab=await resp.arrayBuffer();
   }
-  const {res}=await chartFromAudioBytes(ab,p=>{ btn.textContent='⚙ Analyzing… '+Math.round(p*100)+'%'; });
-  if(!res.bpm){ setStatus('COULDN’T LOCK A TEMPO FROM THE AUDIO — IMPORT A CHART AND TAP ⚙ AGAIN TO FIT IT.'); return; }
-  // Beats-denominated chart (unlike file import's seconds): in play-along mode
-  // curPos() returns beats, so beat units keep the grid in lockstep with the
-  // video. The decoded buffer is discarded — the video is the band.
-  const perBeat=res.bpm/60;
-  const song={
-    id:'imp'+(++importCount),
-    videoId:vid,
-    title:title||vid,
-    artist:(by?by+' · ':'')+'AUTO-CHARTED',
-    bpm:res.bpm,sig:[4,4],key:res.key,
-    sections:[['DETECTED SIGNAL',res.chords.map(c=>[c[0],c[1]*perBeat])]],
-  };
-  st.imported.push(song); saveImported();
-  renderLibrary();
-  loadSong(song);              // note: this detaches the video…
-  await ytAttach(vid,title,by); // …so re-attach it to the new chart
-  setOffset(Math.max(0,res.phaseSec||0));
-  const nSeg=res.chords.filter(c=>c[0]!=='N.C.').length;
-  setStatus('AUTO-CHARTED — '+nSeg+' CHORDS · '+Math.round(res.bpm)+' BPM · KEY '+res.key+'. DRAG OFFSET/BPM TO FINE-TUNE.');
+  await chartCurrentVideoFromBytes(ab,p=>{ btn.textContent='⚙ Analyzing… '+Math.round(p*100)+'%'; });
 }
+$('grabRunBtn').addEventListener('click',()=>{
+  if(!yt.videoId){ setStatus('ATTACH A YOUTUBE VIDEO FIRST.'); return; }
+  // leaving for the Shortcut can tear this page down — remember what we sent
+  // so the return trip lands on step 2 even from a cold start
+  try{ localStorage.setItem('cfy_pendgrab',yt.videoId); }catch(e){}
+  $('grabMsg').textContent='> HANDED OFF TO THE SHORTCUT — COME BACK WHEN IT LANDS.';
+  location.href=grabShortcutUrl(yt.videoId);
+});
+$('grabPickBtn').addEventListener('click',()=>$('grabFile').click());
+$('grabFile').addEventListener('change',async e=>{
+  const file=e.target.files[0]; if(!file) return;
+  e.target.value='';
+  if(!yt.videoId){ setStatus('ATTACH A YOUTUBE VIDEO FIRST.'); return; }
+  const btn=$('grabPickBtn'), label=btn.textContent;
+  btn.disabled=true;
+  try{
+    $('grabMsg').textContent='> READING '+file.name+'…';
+    const ab=await file.arrayBuffer();
+    const song=await chartCurrentVideoFromBytes(ab,p=>{ btn.textContent='⚙ Analyzing… '+Math.round(p*100)+'%'; });
+    if(song){
+      $('grabMsg').textContent='';
+      grabPanelOpen(false);
+      if(!trGet(yt.videoId)) refetchLyrics(null);
+    }else{
+      $('grabMsg').textContent='> NO TEMPO LOCK — TRY ANOTHER SOURCE FILE.';
+    }
+  }catch(err){
+    $('grabMsg').textContent='> COULD NOT DECODE THAT FILE — PICK THE cfy-…m4a A-SHELL SAVED.';
+  }finally{
+    btn.textContent=label; btn.disabled=false;
+  }
+});
+/* the shortcut's last action returns to …/#grabbed — pick that up and put the
+   user straight on step 2. Coming back can be a cold start (the page was torn
+   down while a-Shell worked), so re-attach the video we sent if it's gone. */
+async function checkGrabbedHash(){
+  if(location.hash!=='#grabbed') return;
+  history.replaceState(null,'',location.pathname+location.search);
+  let vid=yt.videoId;
+  if(!vid){
+    try{ vid=localStorage.getItem('cfy_pendgrab')||''; }catch(e){}
+    if(!vid) return;
+    const r=recentStore().find(v=>v.id===vid);
+    await ytAttach(vid,(r&&r.title)||'',(r&&r.by)||'');
+  }
+  try{ localStorage.removeItem('cfy_pendgrab'); }catch(e){}
+  if(st.song&&st.song.videoId===vid){ setStatus('CHART ALREADY LOADED FOR THIS VIDEO.'); return; }
+  grabPanelOpen(true);
+  $('grabMsg').textContent='> DOWNLOAD DONE? TAP 2 AND PICK cfy-'+vid+'.m4a';
+  setStatus('AUDIO GRABBED — TAP 2 CHART IT AND PICK THE FILE.');
+}
+window.addEventListener('hashchange',checkGrabbedHash);
+function guideOpen(open){
+  $('guide').classList.toggle('open',!!open);
+  if(open) $('gdReturnUrl').textContent=location.origin+location.pathname+'#grabbed';
+}
+$('grabHelpLink').addEventListener('click',e=>{ e.preventDefault(); guideOpen(true); });
+$('gdClose').addEventListener('click',()=>guideOpen(false));
+$('guide').addEventListener('click',e=>{ if(e.target.id==='guide'||e.target.id==='gdScrim') guideOpen(false); });
 /* One tap, either way: with a chart loaded, assume the song starts with the
    video (offset 0) and scale the chart's tempo to fit the full duration —
    waitForDuration covers a tap before the player reports one. With no chart,
@@ -3653,6 +3825,7 @@ renderGrid();
 renderLyrics();
 renderLibrary();
 bootSequence();
+checkGrabbedHash();   // returning from the grab shortcut, possibly cold
 </script>
 <!--/APP-->
 <script>
