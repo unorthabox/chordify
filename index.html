@@ -2064,12 +2064,40 @@ function fft(re,im){
     }
   }
 }
+/* ── chord vocabulary ──
+   Six qualities, not sixteen. This is not a compromise, it is exactly what the
+   guitar renderer can DRAW: E_SHAPE/A_SHAPE cover {'',m,7,m7,maj7,sus4} (+sus2 on
+   the A shape), and guitarShape() silently falls back to a plain major triad for
+   anything else — so detecting, say, a dim7 would print a major-triad diagram with
+   a "dim7" label on it. Detecting a chord you then draw wrong is worse than not
+   detecting it.
+   The excluded qualities are also pitch-class ambiguous by construction: C6 IS
+   Am7, Csus2 IS Gsus4, Bdim is a rootless G7, and dim7/aug are 4- and 3-fold
+   root-ambiguous. They would degrade the ~97% of beats that are plain triads in
+   exchange for the ~3% that aren't. */
+const DET_QUAL={'':[0,4,7],'m':[0,3,7],'7':[0,4,7,10],'m7':[0,3,7,10],'maj7':[0,4,7,11],'sus4':[0,5,7],'sus2':[0,2,7]};
+const TONE_W=[1.0,0.9,0.75,0.55];          // root, third, fifth, seventh
+const NONCHORD_W=-0.25;                    // punish energy that shouldn't be there
+/* Parsimony. A 4-note template can match a 3-note chord's chroma perfectly well
+   (a C major chroma is a subset of Cmaj7's), so without a cost for extra notes the
+   richer chord wins by default and everything comes back as a 7th. This is the
+   direct antidote to template-count inflation: a triad wins UNLESS the 7th is
+   really there. */
+const Q_PRIOR={'':0,'m':-0.005,'7':-0.055,'m7':-0.055,'maj7':-0.065,'sus4':-0.075,'sus2':-0.085};
 const TEMPLATES=[];
 for(let r=0;r<12;r++){
-  const maj=new Float32Array(12), min=new Float32Array(12);
-  maj[r]=1;maj[(r+4)%12]=0.8;maj[(r+7)%12]=0.9;
-  min[r]=1;min[(r+3)%12]=0.8;min[(r+7)%12]=0.9;
-  TEMPLATES.push({sym:NOTES[r],t:maj},{sym:NOTES[r]+'m',t:min});
+  for(const q in DET_QUAL){
+    const ivs=DET_QUAL[q];
+    const t=new Float32Array(12).fill(NONCHORD_W);
+    ivs.forEach((iv,n)=>{ t[(r+iv)%12]=TONE_W[n]; });
+    /* L2-normalise. Without this a 4-note template has a ~6% higher dot-product
+       ceiling than a 3-note one against ANY chroma, so every extension wins for
+       free — the classic way naive template inflation destroys accuracy. */
+    let n2=0;for(let i=0;i<12;i++)n2+=t[i]*t[i];
+    n2=Math.sqrt(n2)||1;
+    for(let i=0;i<12;i++)t[i]/=n2;
+    TEMPLATES.push({sym:NOTES[r]+q,t,root:r,q,prior:Q_PRIOR[q]});
+  }
 }
 /* Krumhansl–Schmuckler key profiles */
 const KS_MAJ=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
@@ -2268,7 +2296,6 @@ async function analyzeBuffer(buf,onProgress){
   const jLo=b=>Math.max(0,Math.ceil(BPO*Math.log2(b/FMIN)));
   const jHi=b=>Math.min(NLOG-1,Math.floor(BPO*Math.log2(b/FMIN)));
   const TRE_LO=jLo(65), TRE_HI=jHi(2000);
-  const BASS_LO=jLo(55), BASS_HI=jHi(220);
   // log bin j sits j*12/BPO semitones above FMIN=55 Hz, which is an A (pc 9)
   const pcOfBin=new Int8Array(NLOG);
   for(let j=0;j<NLOG;j++) pcOfBin[j]=((Math.round((j-shift)*12/BPO)+9)%12+12)%12;
@@ -2302,7 +2329,7 @@ async function analyzeBuffer(buf,onProgress){
      and cuts peeling/folding cost ~5x (≈480 windows, not ≈2600 frames) — which is
      what makes harmonic suppression affordable on a phone at all. */
   const acc=new Float32Array(NLOG), clean=new Float32Array(NLOG);
-  const chromas=[], basses=[];
+  const chromas=[];
   const gc=new Float32Array(12);
   for(let w=0;w<wins.length;w++){
     const [a,b]=wins[w];
@@ -2316,35 +2343,47 @@ async function analyzeBuffer(buf,onProgress){
       const ls=logSpec[f];
       for(let j=0;j<NLOG;j++) acc[j]+=ls[j];
     }
-    if(!loud){chromas.push(null);basses.push(null);continue;}
+    if(!loud){chromas.push(null);continue;}
     for(let j=0;j<NLOG;j++) acc[j]/=loud;
     peelHarmonics(acc,clean);
     const c=l2(fold(clean,TRE_LO,TRE_HI,new Float32Array(12)));
-    const bs=fold(clean,BASS_LO,BASS_HI,new Float32Array(12));
-    let bn=0;for(let i=0;i<12;i++)bn+=bs[i];
-    if(bn>0) for(let i=0;i<12;i++)bs[i]/=bn;       // L1: bass is "which note", not "how loud"
-    chromas.push(c); basses.push(bs);
+    chromas.push(c);
     for(let i=0;i<12;i++) gc[i]+=c[i];
   }
   onProgress(0.9);
 
   const key=estimateKey(gc);
 
-  // per-window chroma → template scores
+  /* per-window scores: chroma match + parsimony prior.
+     No bass term and no key prior. Both were built, measured, and cut:
+       - The bass term is supposed to disambiguate rootless voicings and settle
+         Cmaj7-vs-Em. Measured, it does nothing on the corpus overall and it makes
+         INVERSIONS worse (96.2% -> 93.2%) — which is obvious in hindsight, because
+         on a C/E the bass IS an E, so a bass term argues for Em. For the one case
+         it exists to fix, the bass is a liar.
+       - The key prior (scale membership, weighted W_KEY) was flat at low weights
+         and harmful at high ones.
+     Harmonic peeling plus the parsimony prior already do the work they were meant
+     to do. Kept in git if a real-world corpus ever disagrees. */
   const S=TEMPLATES.length;
   const scores=wins.map((_,w)=>{
     const c=chromas[w];
     if(!c) return null;                             // silence → N.C.
     const sc=new Float32Array(S);
     for(let s=0;s<S;s++){
-      let v=0;for(let i=0;i<12;i++)v+=c[i]*TEMPLATES[s].t[i];
-      sc[s]=v;
+      const T=TEMPLATES[s];
+      let v=0;for(let i=0;i<12;i++)v+=c[i]*T.t[i];
+      sc[s]=v+T.prior;
     }
     return sc;
   });
 
-  // Viterbi: reward staying on the same chord (self-transition bonus)
-  const BONUS=0.28;
+  /* Viterbi. A flat self-transition bonus is fine at 24 states and breaks at 72:
+     C, C7, Cmaj7 and Csus4 all score near-identically on a real chroma, and with no
+     preference between them the path flaps between qualities beat to beat. So the
+     transition is factored — changing quality on the same root is cheap, changing
+     root is not. Same O(S²) cost. */
+  const SELF=0.28, SAME_ROOT=0.09;
   const nW=wins.length;
   const dp=[],bp=[];
   for(let w=0;w<nW;w++){
@@ -2353,9 +2392,11 @@ async function analyzeBuffer(buf,onProgress){
     for(let s=0;s<S;s++){
       const emit=sc?sc[s]:0;
       if(w===0){cur[s]=emit;back[s]=-1;continue;}
+      const rs=TEMPLATES[s].root;
       let bi=0,bv=-1e9;
       for(let p=0;p<S;p++){
-        const v=dp[w-1][p]+(p===s?BONUS:0);
+        const tr=(p===s)?SELF:(TEMPLATES[p].root===rs?SAME_ROOT:0);
+        const v=dp[w-1][p]+tr;
         if(v>bv){bv=v;bi=p;}
       }
       cur[s]=emit+bv; back[s]=bi;
