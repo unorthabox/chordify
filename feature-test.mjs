@@ -644,14 +644,18 @@ const noBank = await page.evaluate(async () => {
   await new Promise(r => setTimeout(r, 50));
   return {
     songBankEmpty: SONGS.length === 0,
-    libraryNoEntries: document.getElementById('songlist').textContent.includes('NO ENTRIES'),
+    libraryNoEntries: document.getElementById('songlist').textContent.includes('NO SONGS YET'),
+    // a first run must say how to GET a song, not just that there aren't any
+    libraryTellsYouHow: /PROCESS SONG/i.test(document.getElementById('songlist').textContent),
     shTitle: document.getElementById('shTitle').textContent,
     shArtist: document.getElementById('shArtist').textContent,
     playing: st.playing,
   };
 });
 noBank.songBankEmpty ? ok('bundled song bank removed (SONGS is empty)') : bad('SONGS still has entries');
-noBank.libraryNoEntries ? ok('empty library shows "NO ENTRIES" with nothing imported') : bad('library not empty as expected');
+noBank.libraryNoEntries && noBank.libraryTellsYouHow
+  ? ok('a first run shows an empty library that says how to get a song (not just "NO ENTRIES")')
+  : bad('empty-library state unhelpful: ' + JSON.stringify(noBank));
 noBank.shTitle === 'NOW PLAYING - FRESH VIDEO TITLE'
   ? ok('"NOW PLAYING - *" placeholder is replaced by the attached video\'s title')
   : bad('shTitle with no song loaded: ' + noBank.shTitle);

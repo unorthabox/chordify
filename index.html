@@ -1881,8 +1881,17 @@ function renderLibrary(){
     .filter(s=>(st.libTab==='all'||st.favs.has(s.id)))
     .filter(s=>!q||s.title.toLowerCase().includes(q)||s.artist.toLowerCase().includes(q))
     .forEach(s=>ul.appendChild(songRow(s,false)));
-  if(!ul.children.length)
-    ul.innerHTML='<li style="cursor:default;justify-content:center;color:var(--bone-dim);font-size:13px;letter-spacing:.15em;font-family:var(--mono)">NO ENTRIES</li>';
+  if(!ul.children.length){
+    /* The bundled demo songs are gone, so a first run lands here with nothing at
+       all. "NO ENTRIES" is true but useless — say how to get one. */
+    const blank=!allSongs().length;
+    const msg=blank
+      ? 'NO SONGS YET<br><span style="opacity:.7;letter-spacing:.05em">Search YouTube, attach a video,<br>then tap ⚙ PROCESS SONG.</span>'
+      : (st.libTab!=='all'&&!st.favs.size ? 'NO FAVOURITES YET<br><span style="opacity:.7;letter-spacing:.05em">Tap ★ on a song to keep it here.</span>'
+                                          : 'NO MATCHES');
+    ul.innerHTML='<li style="cursor:default;justify-content:center;text-align:center;line-height:1.7;'+
+      'color:var(--bone-dim);font-size:13px;letter-spacing:.15em;font-family:var(--mono)">'+msg+'</li>';
+  }
 }
 function songRow(s,inSet){
   const li=document.createElement('li');
