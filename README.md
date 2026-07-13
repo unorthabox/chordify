@@ -44,6 +44,9 @@ Then ⚙ Process Song opens a two-step panel:
    bounces back to the app.
 2. **Chart It** — pick that file. The analyzer runs and the chart appears.
 
+This whole path is covered by `npm run test:ios`, which runs it in WebKit — Safari's
+own engine — against a real yt-dlp m4a. It works.
+
 **That second tap cannot be removed**, and it's worth knowing why before you try:
 iOS Safari has no Web Share Target, so a Shortcut *cannot* hand a file to a web app;
 and a little server running on the phone is out too, because iOS Safari blocks HTTPS
@@ -76,8 +79,9 @@ phone on the same wifi.
 ## Tests
 
 ```bash
-npm test                 # all four suites
+npm test                 # the four default suites
 npm run test:detect      # just the chord-detection accuracy harness
+npm run test:ios         # opt-in: the phone path, in Safari's engine
 ```
 
 | suite | what it proves |
@@ -86,6 +90,30 @@ npm run test:detect      # just the chord-detection accuracy harness
 | `update` | a new `index.html` reaches an already-installed app |
 | `feature` | ~70 assertions over the real UI — needs network (it hits live Piped mirrors) |
 | `detect` | chord-detection **accuracy**, against synthesized songs with known chords |
+| `ios` | the whole phone flow, in **WebKit** — opt-in, see below |
+
+### The iOS suite
+
+WebKit is the engine Safari uses, and the only one iOS allows — so running the app
+there exercises the same code the iPhone runs. `ios-test.mjs` drives the real grab
+flow: the Shortcut deep link, the `#grabbed` return trip, and then the one that
+actually decides whether the phone works — **`decodeAudioData` on a real yt-dlp m4a.**
+That is the narrowest part of the whole design, and no amount of UI testing would
+have told us about it.
+
+It's opt-in because it needs two things a clean checkout doesn't have:
+
+```bash
+sudo env "PATH=$PATH" npx playwright install-deps webkit    # WebKit's system libs
+mkdir -p fixtures && yt-dlp -f 'bestaudio[ext=m4a]/bestaudio' \
+  -o 'fixtures/cfy-%(id)s.m4a' 'https://youtube.com/watch?v=<id>'
+npm run test:ios
+```
+
+`fixtures/` is gitignored; the suite finds any `.m4a` in there (or takes `M4A=`), and
+skips the decode checks loudly if there isn't one. Result on a real 3½-minute track:
+WebKit decodes it in ~0.8s and the full chart lands in ~2.4s, so a phone (2–4× slower)
+is comfortable.
 
 `run-tests.mjs` starts each suite's server itself, and **refuses a port it doesn't
 own** — a leftover server from an earlier run will answer a readiness poll perfectly

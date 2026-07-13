@@ -16,12 +16,18 @@ const SUITES = [
   { name: 'update',  file: 'update-test.mjs',  port: 8932, sandbox: true },
   { name: 'feature', file: 'feature-test.mjs', port: 8933, network: true },
   { name: 'detect',  file: 'detect-test.mjs',  port: 8935 }, // 8934 is grab-server's port
+  // WebKit — Safari's engine, the only one iOS allows. Opt-in: it needs WebKit's
+  // system deps (`npx playwright install-deps webkit`, wants sudo) and, to check the
+  // decode path that actually matters, a real m4a. Not in the default run because a
+  // clean checkout has neither.
+  { name: 'ios',     file: 'ios-test.mjs',     port: 8938, optIn: true, network: true },
 ];
 
 const SITE_FILES = ['index.html', 'sw.js', 'manifest.webmanifest', 'icon-180.png'];
 
 const want = process.argv.slice(2).filter(a => !a.startsWith('-'));
-const suites = want.length ? SUITES.filter(s => want.includes(s.name)) : SUITES;
+const suites = want.length ? SUITES.filter(s => want.includes(s.name))
+                           : SUITES.filter(s => !s.optIn);
 if (!suites.length) {
   console.error('unknown suite. known: ' + SUITES.map(s => s.name).join(', '));
   process.exit(2);

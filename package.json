@@ -8,6 +8,7 @@
     "test:update": "node run-tests.mjs update",
     "test:feature": "node run-tests.mjs feature",
     "test:detect": "node run-tests.mjs detect",
+    "test:ios": "node run-tests.mjs ios",
     "serve": "./serve.sh",
     "grabber": "node grab-server.mjs"
   },
