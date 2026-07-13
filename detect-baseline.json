@@ -1,0 +1,520 @@
+{
+  "label": "pre-upgrade (24 maj/min templates)",
+  "summary": {
+    "csrTriad": 89.7,
+    "csrExact": 62.7,
+    "csrRoot": 89.7,
+    "overExt": 0,
+    "missExt": 100,
+    "heldTriad": 90.9,
+    "heldExact": 60.1,
+    "msTotal": 1984
+  },
+  "rows": [
+    {
+      "name": "I-V-vi-IV in C",
+      "split": "dev",
+      "gate": null,
+      "ms": 146,
+      "bpmTrue": 120,
+      "bpmGot": 121.5,
+      "key": "C",
+      "nSeg": 8,
+      "csrExact": 89.5,
+      "csrTriad": 89.5,
+      "csrRoot": 89.5,
+      "overExt": 0,
+      "missExt": null,
+      "confusion": {
+        "maj -> maj": 1148,
+        "maj -> m": 48,
+        "m -> m": 346,
+        "m -> maj": 54
+      }
+    },
+    {
+      "name": "I-V-vi-IV in G",
+      "split": "held",
+      "gate": null,
+      "ms": 129,
+      "bpmTrue": 108,
+      "bpmGot": 108.1,
+      "key": "G",
+      "nSeg": 8,
+      "csrExact": 92.7,
+      "csrTriad": 92.7,
+      "csrRoot": 92.7,
+      "overExt": 0,
+      "missExt": null,
+      "confusion": {
+        "maj -> maj": 1292,
+        "maj -> m": 37,
+        "m -> m": 407,
+        "m -> maj": 37
+      }
+    },
+    {
+      "name": "I-V-vi-IV in E",
+      "split": "held",
+      "gate": null,
+      "ms": 57,
+      "bpmTrue": 132,
+      "bpmGot": 131,
+      "key": "E",
+      "nSeg": 8,
+      "csrExact": 89.1,
+      "csrTriad": 89.1,
+      "csrRoot": 89.1,
+      "overExt": 0,
+      "missExt": null,
+      "confusion": {
+        "maj -> maj": 1058,
+        "m -> maj": 72,
+        "m -> m": 292,
+        "maj -> m": 28
+      }
+    },
+    {
+      "name": "i-VI-III-VII in Am",
+      "split": "dev",
+      "gate": null,
+      "ms": 181,
+      "bpmTrue": 96,
+      "bpmGot": 95.6,
+      "key": "C",
+      "nSeg": 8,
+      "csrExact": 92.6,
+      "csrTriad": 92.6,
+      "csrRoot": 92.6,
+      "overExt": 0,
+      "missExt": null,
+      "confusion": {
+        "m -> m": 452,
+        "m -> maj": 44,
+        "maj -> maj": 1478,
+        "maj -> m": 21
+      }
+    },
+    {
+      "name": "pure triads, rich saw",
+      "split": "dev",
+      "gate": "noExtensions",
+      "ms": 64,
+      "bpmTrue": 120,
+      "bpmGot": 121.5,
+      "key": "C",
+      "nSeg": 8,
+      "csrExact": 90.8,
+      "csrTriad": 90.8,
+      "csrRoot": 90.8,
+      "overExt": 0,
+      "missExt": null,
+      "confusion": {
+        "maj -> maj": 1175,
+        "maj -> m": 21,
+        "m -> m": 375,
+        "m -> maj": 25
+      }
+    },
+    {
+      "name": "pure triads, saw, in D",
+      "split": "held",
+      "gate": "noExtensions",
+      "ms": 174,
+      "bpmTrue": 100,
+      "bpmGot": 101.3,
+      "key": "D",
+      "nSeg": 8,
+      "csrExact": 90.9,
+      "csrTriad": 90.9,
+      "csrRoot": 90.9,
+      "overExt": 0,
+      "missExt": null,
+      "confusion": {
+        "maj -> maj": 1410,
+        "maj -> m": 25,
+        "m -> m": 449,
+        "m -> maj": 31
+      }
+    },
+    {
+      "name": "ii-V-I jazz in C",
+      "split": "dev",
+      "gate": null,
+      "ms": 62,
+      "bpmTrue": 120,
+      "bpmGot": 121.5,
+      "key": "C",
+      "nSeg": 10,
+      "csrExact": 0,
+      "csrTriad": 66.7,
+      "csrRoot": 66.7,
+      "overExt": null,
+      "missExt": 100,
+      "confusion": {
+        "m7 -> m": 159,
+        "m7 -> maj": 236,
+        "7 -> maj": 401,
+        "maj7 -> maj": 548,
+        "maj7 -> m": 252
+      }
+    },
+    {
+      "name": "ii-V-I jazz in F",
+      "split": "held",
+      "gate": null,
+      "ms": 81,
+      "bpmTrue": 92,
+      "bpmGot": 92.4,
+      "key": "F",
+      "nSeg": 7,
+      "csrExact": 0,
+      "csrTriad": 87.3,
+      "csrRoot": 87.3,
+      "overExt": null,
+      "missExt": 100,
+      "confusion": {
+        "m7 -> m": 475,
+        "m7 -> maj": 42,
+        "7 -> maj": 522,
+        "maj7 -> maj": 865,
+        "maj7 -> m": 178
+      }
+    },
+    {
+      "name": "blues in A (dom 7ths)",
+      "split": "dev",
+      "gate": null,
+      "ms": 68,
+      "bpmTrue": 104,
+      "bpmGot": 105.3,
+      "key": "Am",
+      "nSeg": 6,
+      "csrExact": 0,
+      "csrTriad": 92.5,
+      "csrRoot": 92.5,
+      "overExt": null,
+      "missExt": 100,
+      "confusion": {
+        "7 -> maj": 1842
+      }
+    },
+    {
+      "name": "minor 7th vamp",
+      "split": "held",
+      "gate": null,
+      "ms": 66,
+      "bpmTrue": 110,
+      "bpmGot": 109.4,
+      "key": "Am",
+      "nSeg": 5,
+      "csrExact": 0,
+      "csrTriad": 87,
+      "csrRoot": 87,
+      "overExt": null,
+      "missExt": 100,
+      "confusion": {
+        "m7 -> m": 1606,
+        "m7 -> maj": 135
+      }
+    },
+    {
+      "name": "maj7 vs dom7 in G",
+      "split": "dev",
+      "gate": null,
+      "ms": 92,
+      "bpmTrue": 88,
+      "bpmGot": 89.4,
+      "key": "G",
+      "nSeg": 7,
+      "csrExact": 0,
+      "csrTriad": 83.7,
+      "csrRoot": 83.7,
+      "overExt": null,
+      "missExt": 100,
+      "confusion": {
+        "maj7 -> maj": 1056,
+        "7 -> maj": 818,
+        "maj7 -> m": 303
+      }
+    },
+    {
+      "name": "sus resolution in D",
+      "split": "dev",
+      "gate": null,
+      "ms": 64,
+      "bpmTrue": 116,
+      "bpmGot": 115.1,
+      "key": "D",
+      "nSeg": 3,
+      "csrExact": 48.2,
+      "csrTriad": 98,
+      "csrRoot": 98,
+      "overExt": 0,
+      "missExt": 100,
+      "confusion": {
+        "sus4 -> maj": 616,
+        "maj -> maj": 828,
+        "sus2 -> maj": 207
+      }
+    },
+    {
+      "name": "sus4 pop in A",
+      "split": "held",
+      "gate": null,
+      "ms": 59,
+      "bpmTrue": 124,
+      "bpmGot": 125.7,
+      "key": "E",
+      "nSeg": 2,
+      "csrExact": 62.3,
+      "csrTriad": 98.6,
+      "csrRoot": 98.6,
+      "overExt": 0,
+      "missExt": 100,
+      "confusion": {
+        "maj -> maj": 962,
+        "sus4 -> maj": 582
+      }
+    },
+    {
+      "name": "inversions (C/E, G/B)",
+      "split": "dev",
+      "gate": null,
+      "ms": 73,
+      "bpmTrue": 100,
+      "bpmGot": 101.3,
+      "key": "Am",
+      "nSeg": 4,
+      "csrExact": 96.2,
+      "csrTriad": 96.2,
+      "csrRoot": 96.2,
+      "overExt": 0,
+      "missExt": null,
+      "confusion": {
+        "maj -> maj": 1382,
+        "maj -> m": 53,
+        "m -> m": 480
+      }
+    },
+    {
+      "name": "detuned -40 cents",
+      "split": "dev",
+      "gate": null,
+      "ms": 60,
+      "bpmTrue": 120,
+      "bpmGot": 121.5,
+      "key": "Em",
+      "nSeg": 7,
+      "csrExact": 79.9,
+      "csrTriad": 79.9,
+      "csrRoot": 79.9,
+      "overExt": 0,
+      "missExt": null,
+      "confusion": {
+        "maj -> maj": 954,
+        "maj -> m": 242,
+        "m -> m": 381,
+        "m -> maj": 19
+      }
+    },
+    {
+      "name": "detuned +30 cents",
+      "split": "held",
+      "gate": null,
+      "ms": 65,
+      "bpmTrue": 112,
+      "bpmGot": 110.8,
+      "key": "G",
+      "nSeg": 8,
+      "csrExact": 93.5,
+      "csrTriad": 93.5,
+      "csrRoot": 93.5,
+      "overExt": 0,
+      "missExt": null,
+      "confusion": {
+        "maj -> maj": 1250,
+        "maj -> m": 31,
+        "m -> m": 403,
+        "m -> maj": 26
+      }
+    },
+    {
+      "name": "slow, 60 bpm",
+      "split": "held",
+      "gate": null,
+      "ms": 123,
+      "bpmTrue": 62,
+      "bpmGot": 63,
+      "key": "Am",
+      "nSeg": 4,
+      "csrExact": 0,
+      "csrTriad": 97.6,
+      "csrRoot": 97.6,
+      "overExt": null,
+      "missExt": 100,
+      "confusion": {
+        "maj7 -> maj": 1532,
+        "maj7 -> m": 12,
+        "m7 -> m": 1511,
+        "m7 -> maj": 37
+      }
+    },
+    {
+      "name": "fast, 170 bpm",
+      "split": "dev",
+      "gate": null,
+      "ms": 45,
+      "bpmTrue": 170,
+      "bpmGot": 167.1,
+      "key": "E",
+      "nSeg": 8,
+      "csrExact": 92.4,
+      "csrTriad": 92.4,
+      "csrRoot": 92.4,
+      "overExt": 0,
+      "missExt": null,
+      "confusion": {
+        "maj -> maj": 984,
+        "m -> maj": 33,
+        "m -> m": 108
+      }
+    },
+    {
+      "name": "two chords per bar",
+      "split": "held",
+      "gate": null,
+      "ms": 26,
+      "bpmTrue": 120,
+      "bpmGot": 121.3,
+      "key": "Am",
+      "nSeg": 8,
+      "csrExact": 59.2,
+      "csrTriad": 77.9,
+      "csrRoot": 77.9,
+      "overExt": 0,
+      "missExt": 100,
+      "confusion": {
+        "maj -> maj": 346,
+        "maj -> m": 50,
+        "m -> m": 176,
+        "m -> maj": 24,
+        "m7 -> m": 70,
+        "m7 -> maj": 30,
+        "7 -> maj": 100
+      }
+    },
+    {
+      "name": "bass-heavy mix",
+      "split": "dev",
+      "gate": null,
+      "ms": 73,
+      "bpmTrue": 100,
+      "bpmGot": 101.3,
+      "key": "C",
+      "nSeg": 9,
+      "csrExact": 72.1,
+      "csrTriad": 89.1,
+      "csrRoot": 89.1,
+      "overExt": 0,
+      "missExt": 100,
+      "confusion": {
+        "maj -> maj": 1152,
+        "maj -> m": 18,
+        "m -> m": 231,
+        "m -> maj": 9,
+        "m7 -> m": 106,
+        "m7 -> maj": 134,
+        "7 -> maj": 240,
+        "maj -> N.C.": 25
+      }
+    },
+    {
+      "name": "no bass at all",
+      "split": "held",
+      "gate": null,
+      "ms": 76,
+      "bpmTrue": 100,
+      "bpmGot": 101.3,
+      "key": "C",
+      "nSeg": 6,
+      "csrExact": 74,
+      "csrTriad": 85.6,
+      "csrRoot": 85.6,
+      "overExt": 0,
+      "missExt": 100,
+      "confusion": {
+        "maj -> maj": 1189,
+        "maj -> m": 6,
+        "m -> m": 231,
+        "m -> maj": 9,
+        "m7 -> maj": 240,
+        "7 -> maj": 240
+      }
+    },
+    {
+      "name": "with a drum kit",
+      "split": "dev",
+      "gate": null,
+      "ms": 58,
+      "bpmTrue": 128,
+      "bpmGot": 128.5,
+      "key": "C",
+      "nSeg": 8,
+      "csrExact": 90.2,
+      "csrTriad": 90.2,
+      "csrRoot": 90.2,
+      "overExt": 0,
+      "missExt": null,
+      "confusion": {
+        "m -> m": 329,
+        "m -> maj": 41,
+        "maj -> maj": 1105,
+        "maj -> m": 21
+      }
+    },
+    {
+      "name": "odd-harmonic voice",
+      "split": "held",
+      "gate": null,
+      "ms": 62,
+      "bpmTrue": 118,
+      "bpmGot": 118.5,
+      "key": "Em",
+      "nSeg": 9,
+      "csrExact": 99.3,
+      "csrTriad": 99.3,
+      "csrRoot": 99.3,
+      "overExt": 0,
+      "missExt": null,
+      "confusion": {
+        "maj -> maj": 1008,
+        "maj -> m": 2,
+        "m -> m": 608,
+        "m -> maj": 2,
+        "maj -> N.C.": 3
+      }
+    },
+    {
+      "name": "noisy / hissy source",
+      "split": "dev",
+      "gate": null,
+      "ms": 80,
+      "bpmTrue": 96,
+      "bpmGot": 95.5,
+      "key": "D",
+      "nSeg": 8,
+      "csrExact": 92.6,
+      "csrTriad": 92.6,
+      "csrRoot": 92.6,
+      "overExt": 0,
+      "missExt": null,
+      "confusion": {
+        "maj -> maj": 1453,
+        "maj -> m": 42,
+        "m -> m": 460,
+        "m -> maj": 40
+      }
+    }
+  ]
+}
