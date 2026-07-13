@@ -817,6 +817,7 @@
             <h4>Sync</h4>
             <div id="crtStatus"><span id="statusTxt">SYSTEM READY.</span> <span class="cursor"></span></div>
             <button class="btn big" id="ytSyncBtn">⚙ Process Song</button>
+            <button class="btn" id="ytUndoBtn" hidden>↶ Undo re-fit</button>
             <div id="grabPanel">
               <div class="step">
                 <span class="num">1</span>
@@ -828,8 +829,8 @@
                 <input type="file" id="grabFile" accept="audio/*,.m4a" hidden>
               </div>
               <div id="grabMsg"></div>
-              <div class="hint">1 HANDS THE VIDEO TO THE SHORTCUT — A-SHELL DOWNLOADS IT, THEN COMES BACK HERE.
-                2 PICKS THAT FILE AND CHARTS IT. <a href="#" id="grabHelpLink" style="color:var(--cyan)">FIRST TIME? SET IT UP →</a></div>
+              <div class="hint"><span id="grabHint">1 HANDS THE VIDEO TO THE SHORTCUT — A-SHELL DOWNLOADS IT, THEN COMES BACK HERE.
+                2 PICKS THAT FILE AND CHARTS IT.</span> <a href="#" id="grabHelpLink" style="color:var(--cyan)">FIRST TIME? SET IT UP →</a></div>
             </div>
             <div class="stepper">
               <button class="btn" id="ytOffDown" aria-label="Offset down 0.1s">−</button>
@@ -1995,6 +1996,7 @@ function updateFavBtn(){
 function loadSong(s){
   pause();
   if(st.mode==='yt') ytDetach(true);
+  refitUndoClear();                  // an undo only ever applies to the song it came from
   st.song=s; st.cells=buildCells(s);
   st.mode=s.buffer?'audio':'synth';
   st.buffer=s.buffer||null;
@@ -3326,7 +3328,27 @@ function updateYtBpmLcd(){ const el=$('ytBpmLcd'); if(el) el.textContent=Math.ro
 function setSongBpm(v){
   if(!st.song) return;
   st.song.bpm=Math.max(30,Math.min(300,v));
+  saveSongEdit();
   updateChips(); updateYtBpmLcd(); refreshNow(true);
+}
+/* st.song is a live reference into st.imported, so a bpm edit already mutates the
+   stored song — but nothing writes it back to localStorage, so it dies on reload. */
+function saveSongEdit(){
+  if(st.song&&st.imported.indexOf(st.song)>=0) saveImported();
+}
+/* ── re-fit undo ──
+   Process Song on an already-charted video re-fits the tempo to the video and
+   zeroes the offset. That throws away the detected BPM and any offset the user
+   dialled in by hand, so take a snapshot first and offer it back. */
+let refitUndo=null;
+function refitSnapshot(){
+  if(!st.song) return;
+  refitUndo={id:st.song.id,bpm:st.song.bpm,offset:yt.offset};
+  const b=$('ytUndoBtn'); if(b) b.hidden=false;
+}
+function refitUndoClear(){
+  refitUndo=null;
+  const b=$('ytUndoBtn'); if(b) b.hidden=true;
 }
 /* Auto-scale the grid's tempo so its total length exactly spans (video duration
    − offset). With one-tap Process Song the offset starts at 0 (the song is
@@ -3341,8 +3363,9 @@ function autoScaleTempo(){
   const total=totalUnits();
   if(!dur||span<=0||!total) return;
   st.song.bpm=Math.max(30,Math.min(300,total*60/span));
+  saveSongEdit();
   updateChips(); updateYtBpmLcd(); refreshNow(true);
-  setStatus('PROCESSED — TEMPO SET TO '+Math.round(st.song.bpm)+' BPM TO FIT '+fmtTime(span)+' OF VIDEO. DRAG OFFSET FOR AN INTRO.');
+  setStatus('PROCESSED — TEMPO SET TO '+Math.round(st.song.bpm)+' BPM TO FIT '+fmtTime(span)+' OF VIDEO. TAP ↶ UNDO TO PUT IT BACK.');
 }
 /* ── auto-chart: with no chart loaded, Process Song needs the attached video's
    raw audio, which the browser itself can't fetch (no CORS, ciphered streams).
@@ -3364,15 +3387,20 @@ async function chartCurrentVideoFromBytes(ab,onProgress){
   const {res}=await chartFromAudioBytes(ab,onProgress||(()=>{}));
   if(!res.bpm){ setStatus('COULDN’T LOCK A TEMPO FROM THE AUDIO — IMPORT A CHART AND TAP ⚙ AGAIN TO FIT IT.'); return null; }
   const perBeat=res.bpm/60;
+  // re-charting a video must replace its chart, not mint a second one: a duplicate
+  // videoId would leave find() resuming whichever copy came first — the stale one.
+  // Reuse the existing id so favourites, setlists and the saved sync offset survive.
+  const priorIdx=st.imported.findIndex(s=>s.videoId===vid);
   const song={
-    id:'imp'+(++importCount),
+    id:priorIdx>=0?st.imported[priorIdx].id:'imp'+(++importCount),
     videoId:vid,
     title:title||vid,
     artist:(by?by+' · ':'')+'AUTO-CHARTED',
     bpm:res.bpm,sig:[4,4],key:res.key,
     sections:[['DETECTED SIGNAL',res.chords.map(c=>[c[0],c[1]*perBeat])]],
   };
-  st.imported.push(song); saveImported();
+  if(priorIdx>=0) st.imported[priorIdx]=song; else st.imported.push(song);
+  saveImported();
   renderLibrary();
   loadSong(song);              // note: this detaches the video…
   await ytAttach(vid,title,by); // …so re-attach it to the new chart
@@ -3385,10 +3413,25 @@ async function chartCurrentVideoFromBytes(ab,onProgress){
    the m4a it leaves in a-Shell's Documents through the file picker. iOS Safari
    has no Web Share Target, so the handoff back is a file pick — one extra tap,
    and the price of needing no machine anywhere. */
+/* iPadOS 13+ reports itself as a Mac, so the touch-points check is load-bearing. */
+function isIOS(){
+  const ua=navigator.userAgent||'';
+  return /iPhone|iPad|iPod/.test(ua) ||
+         (/Macintosh/.test(ua) && (navigator.maxTouchPoints||0) > 1);
+}
 function grabPanelOpen(open){
   const p=$('grabPanel'); if(!p) return;
   p.classList.toggle('open',!!open);
-  if(open) $('grabMsg').textContent='';
+  if(open){
+    $('grabMsg').textContent='';
+    // step 1 deep-links to an iOS Shortcut; off iOS that button does nothing, so
+    // say the thing that actually works here instead of iPhone instructions.
+    const ios=isIOS(), h=$('grabHint'), run=$('grabRunBtn');
+    if(run) run.disabled=!ios;
+    if(h) h.textContent=ios
+      ? '1 HANDS THE VIDEO TO THE SHORTCUT — A-SHELL DOWNLOADS IT, THEN COMES BACK HERE. 2 PICKS THAT FILE AND CHARTS IT.'
+      : 'STEP 1 IS IPHONE-ONLY. ON A DESKTOP: RUN `node grab-server.mjs` FOR ONE-TAP PROCESSING, OR DOWNLOAD THE AUDIO YOURSELF (yt-dlp -f bestaudio[ext=m4a]) AND TAP 2 TO CHART IT.';
+  }
 }
 function grabShortcutUrl(vid){
   const watch='https://www.youtube.com/watch?v='+vid;
@@ -3415,11 +3458,24 @@ async function autoChartFromVideo(btn){
     // no helper listening — that's the normal case on a phone. Show the
     // grab-it-here panel rather than an error.
     grabPanelOpen(true);
-    setStatus('NO CHART YET — TAP 1 GRAB AUDIO, THEN 2 CHART IT.');
+    setStatus(isIOS()
+      ? 'NO CHART YET — TAP 1 GRAB AUDIO, THEN 2 CHART IT.'
+      : 'NO GRABBER ANSWERING — RUN `node grab-server.mjs` FOR ONE-TAP, OR GRAB THE AUDIO YOURSELF AND TAP 2.');
     return;
   }
   btn.textContent='⚙ Downloading…';
-  const resp=await fetch(grabBase()+'/grab?v='+vid);
+  // yt-dlp can wedge (a slow extractor, a challenge it can't solve). Without a
+  // deadline the button just stays "Downloading…" until the user reloads.
+  const gctl=new AbortController();
+  const gto=setTimeout(()=>gctl.abort(),120000);
+  let resp;
+  try{
+    resp=await fetch(grabBase()+'/grab?v='+vid,{signal:gctl.signal});
+  }catch(e){
+    clearTimeout(gto);
+    throw new Error(e&&e.name==='AbortError'?'GRABBER TIMED OUT AFTER 2 MIN':'GRABBER UNREACHABLE');
+  }
+  clearTimeout(gto);
   if(!resp.ok) throw new Error('DOWNLOAD FAILED ('+resp.status+')');
   let ab;
   if(resp.body&&resp.body.getReader){
@@ -3513,6 +3569,7 @@ $('ytSyncBtn').addEventListener('click',async()=>{
     }else{
       await waitForDuration(yt.videoId,3000);
       if(!(yt.player&&yt.player.getDuration&&yt.player.getDuration()>0)){ setStatus('VIDEO STILL LOADING — TRY AGAIN IN A MOMENT.'); return; }
+      refitSnapshot();               // this branch is destructive — keep a way back
       setOffset(0);
       autoScaleTempo();
     }
@@ -3522,6 +3579,16 @@ $('ytSyncBtn').addEventListener('click',async()=>{
   }finally{
     btn.textContent=label; btn.disabled=false;
   }
+});
+$('ytUndoBtn').addEventListener('click',()=>{
+  if(!refitUndo||!st.song||st.song.id!==refitUndo.id){ refitUndoClear(); return; }
+  const u=refitUndo;
+  st.song.bpm=u.bpm;
+  saveSongEdit();
+  setOffset(u.offset);               // setOffset persists the offset and refreshes
+  updateChips(); updateYtBpmLcd();
+  setStatus('RE-FIT UNDONE — BPM '+Math.round(u.bpm)+', OFFSET '+u.offset.toFixed(2)+'s RESTORED.');
+  refitUndoClear();
 });
 $('ytOffDown').addEventListener('click',()=>setOffset(yt.offset-0.1));
 $('ytOffUp').addEventListener('click',()=>setOffset(yt.offset+0.1));

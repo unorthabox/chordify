@@ -19,7 +19,6 @@ import { createServer } from 'node:http';
 import { spawn, execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { access, constants } from 'node:fs/promises';
 
 const PORT = process.env.PORT || 8934;
 

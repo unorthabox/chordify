@@ -1,7 +1,17 @@
 {
-  "dependencies": {
-    "playwright": "^1.61.1",
-    "pngjs": "^7.0.0",
-    "puppeteer-core": "^25.3.0"
+  "name": "chordify",
+  "private": true,
+  "description": "Chord charts from any YouTube video, in the browser. No server, no build step.",
+  "scripts": {
+    "test": "node run-tests.mjs",
+    "test:pwa": "node run-tests.mjs pwa",
+    "test:update": "node run-tests.mjs update",
+    "test:feature": "node run-tests.mjs feature",
+    "test:detect": "node run-tests.mjs detect",
+    "serve": "./serve.sh",
+    "grabber": "node grab-server.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.1"
   }
 }

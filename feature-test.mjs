@@ -323,15 +323,23 @@ const processGuards = await page.evaluate(async () => {
   return { noVideo, noChart, noSongCreated: !st.song,
            panelOpen: document.getElementById('grabPanel').classList.contains('open'),
            shortcutUrl: grabShortcutUrl('vid-guard0000'),
+           isIOS: isIOS(),
+           hint: document.getElementById('grabHint').textContent,
+           runDisabled: document.getElementById('grabRunBtn').disabled,
            btnRestored: document.getElementById('ytSyncBtn').textContent.includes('Process Song') };
 });
 processGuards.noVideo.includes('ATTACH A YOUTUBE VIDEO')
   ? ok('⚙ Process Song with no video attached asks the user to attach one')
   : bad('no-video guard status: ' + processGuards.noVideo);
-processGuards.panelOpen && processGuards.noChart.includes('GRAB AUDIO')
-  && processGuards.noSongCreated && processGuards.btnRestored
-  ? ok('⚙ Process Song with no grabber opens the phone grab panel (no server needed)')
+processGuards.panelOpen && processGuards.noSongCreated && processGuards.btnRestored
+  ? ok('⚙ Process Song with no grabber opens the grab panel (no server needed)')
   : bad('no-grabber fallback: ' + JSON.stringify(processGuards));
+// step 1 deep-links an iOS Shortcut, so off-iOS it is dead. This browser is a
+// desktop: the copy must say so and the button must be disabled, not dangled.
+!processGuards.isIOS && processGuards.runDisabled
+  && processGuards.hint.includes('IPHONE-ONLY') && processGuards.noChart.includes('grab-server')
+  ? ok('no-grabber fallback on a DESKTOP explains the desktop fix, not iPhone instructions')
+  : bad('desktop grab panel: ' + JSON.stringify(processGuards));
 processGuards.shortcutUrl.startsWith('shortcuts://run-shortcut?name=Chordify%20Grab')
   && processGuards.shortcutUrl.includes(encodeURIComponent('https://www.youtube.com/watch?v=vid-guard0000'))
   ? ok('grab step 1 deep-links the Chordify Grab shortcut with the video URL')
@@ -829,7 +837,117 @@ const search = await page.evaluate(async () => {
 search.err ? bad('keyless search failed: ' + search.err)
            : ok(`keyless search works: ${search.n} results, first "${search.first.title.slice(0, 40)}" id=${search.first.id}`);
 
+// --- re-fit is undoable ------------------------------------------------------
+// Process Song on an already-charted video re-fits BPM and zeroes the offset.
+// That is destructive: it throws away the detected tempo and any offset the user
+// dialled in by hand. It must be reversible.
+const refit = await page.evaluate(async () => {
+  window.YT = { Player: function (el, opts) {
+    this.getCurrentTime = () => 0; this.getDuration = () => 100; this.setPlaybackRate = () => {};
+    setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
+  }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
+  window.loadYtApi = () => Promise.resolve();
+  const song = { id: 'imp-refit', videoId: 'vid-refit000', title: 'Refit', artist: 'x',
+                 bpm: 93, sig: [4, 4], key: 'C',
+                 sections: [['A', [['C', 4], ['G', 4], ['Am', 4], ['F', 4]]]] };
+  st.imported.push(song); saveImported();
+  loadSong(song);
+  await ytAttach('vid-refit000', 'Refit', 'Chan');
+  setOffset(7.5);                                  // the user dials in an intro by hand
+  const before = { bpm: st.song.bpm, offset: yt.offset,
+                   undoHidden: document.getElementById('ytUndoBtn').hidden };
+
+  document.getElementById('ytSyncBtn').click();     // destructive branch
+  for (let i = 0; i < 40 && document.getElementById('ytSyncBtn').disabled; i++)
+    await new Promise(r => setTimeout(r, 50));
+  const after = { bpm: st.song.bpm, offset: yt.offset,
+                  undoShown: !document.getElementById('ytUndoBtn').hidden };
+
+  document.getElementById('ytUndoBtn').click();
+  const undone = { bpm: st.song.bpm, offset: yt.offset,
+                   undoHidden: document.getElementById('ytUndoBtn').hidden };
+  // and the restored tempo must survive a reload, i.e. actually be persisted
+  const stored = JSON.parse(localStorage.getItem('cfy_imported') || '[]')
+                   .find(s => s.id === 'imp-refit');
+  return { before, after, undone, storedBpm: stored && stored.bpm };
+});
+refit.before.undoHidden && refit.after.undoShown
+  && refit.after.bpm !== refit.before.bpm && refit.after.offset === 0
+  ? ok(`⚙ Process Song re-fit is destructive as designed (93→${Math.round(refit.after.bpm)} bpm, offset 7.5→0) and offers ↶ Undo`)
+  : bad('re-fit did not behave as expected: ' + JSON.stringify(refit));
+refit.undone.bpm === refit.before.bpm && refit.undone.offset === refit.before.offset
+  && refit.undone.undoHidden
+  ? ok('↶ Undo restores the detected BPM and the hand-dialled offset, then hides itself')
+  : bad('undo did not restore: ' + JSON.stringify(refit));
+refit.storedBpm === refit.before.bpm
+  ? ok('the undone BPM is persisted to localStorage (survives a reload)')
+  : bad(`BPM edits are not persisted: stored ${refit.storedBpm}, expected ${refit.before.bpm}`);
+
+// --- re-charting a video replaces its chart, never duplicates it --------------
+// A duplicate videoId would leave find() resuming whichever copy came first — the
+// stale one — so the user's re-chart would silently appear to do nothing.
+const dedupe = await page.evaluate(async () => {
+  const vid = 'vid-dupe0000';
+  st.imported = st.imported.filter(s => s.videoId !== vid);
+  const mk = (bpm) => ({
+    chords: [['C', 2], ['G', 2], ['Am', 2], ['F', 2]], bpm, beatSec: 60 / bpm, phaseSec: 0, key: 'C',
+  });
+  const realChart = window.chartFromAudioBytes;
+  window.YT = { Player: function (el, opts) {
+    this.getCurrentTime = () => 0; this.getDuration = () => 100; this.setPlaybackRate = () => {};
+    setTimeout(() => { if (opts.events && opts.events.onReady) opts.events.onReady(); }, 0);
+  }, PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 } };
+  window.loadYtApi = () => Promise.resolve();
+  await ytAttach(vid, 'Dupe', 'Chan');
+
+  window.chartFromAudioBytes = async () => ({ res: mk(100), buf: null });
+  await chartCurrentVideoFromBytes(new ArrayBuffer(8), () => {});
+  const firstId = st.imported.find(s => s.videoId === vid).id;
+  st.favs.add(firstId);                                   // user favourites it
+
+  window.chartFromAudioBytes = async () => ({ res: mk(140), buf: null });
+  await chartCurrentVideoFromBytes(new ArrayBuffer(8), () => {});
+  window.chartFromAudioBytes = realChart;
+
+  const rows = st.imported.filter(s => s.videoId === vid);
+  const persisted = JSON.parse(localStorage.getItem('cfy_imported') || '[]')
+                      .filter(s => s.videoId === vid);
+  return { n: rows.length, nPersisted: persisted.length, bpm: rows[0] && Math.round(rows[0].bpm),
+           idKept: rows[0] && rows[0].id === firstId, stillFav: st.favs.has(firstId) };
+});
+dedupe.n === 1 && dedupe.nPersisted === 1 && dedupe.bpm === 140
+  ? ok('re-charting a video REPLACES its chart (1 entry, new 140 bpm) instead of duplicating it')
+  : bad('re-chart duplicated the song: ' + JSON.stringify(dedupe));
+dedupe.idKept && dedupe.stillFav
+  ? ok('the replaced chart keeps its id, so favourites / setlists / sync offset survive')
+  : bad('re-chart lost the song id: ' + JSON.stringify(dedupe));
+
 await browser.close();
+
+// --- the grab panel on an actual iPhone UA ------------------------------------
+// The desktop copy was asserted above; this proves the iOS branch still says the
+// iPhone thing, since that is the platform the whole flow exists for.
+const iBrowser = await chromium.launch();
+const iCtx = await iBrowser.newContext({
+  userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 '
+           + '(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+  viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
+});
+const iPage = await iCtx.newPage();
+await iPage.emulateMedia({ reducedMotion: 'reduce' });
+await iPage.goto(BASE, { waitUntil: 'load' });
+await iPage.waitForSelector('#app');
+const ios = await iPage.evaluate(() => {
+  grabPanelOpen(true);
+  return { isIOS: isIOS(),
+           hint: document.getElementById('grabHint').textContent,
+           runDisabled: document.getElementById('grabRunBtn').disabled };
+});
+ios.isIOS && !ios.runDisabled && ios.hint.includes('A-SHELL')
+  ? ok('on an iPhone UA the grab panel keeps the Shortcut/a-Shell instructions and step 1 is live')
+  : bad('iOS grab panel: ' + JSON.stringify(ios));
+await iBrowser.close();
+
 console.log('\npage errors: ' + (errors.length ? JSON.stringify(errors) : 'none'));
 console.log(fail.length ? `\n${fail.length} FAILURE(S)` : '\nALL FEATURE CHECKS PASSED');
 process.exit(fail.length ? 1 : 0);
