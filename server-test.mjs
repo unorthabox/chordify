@@ -75,6 +75,22 @@ health.v2 === true && health.stems === true
   ? ok('/health announces v2+stems (Phase-2 client feature detection)')
   : bad('/health missing v2/stems flags: ' + JSON.stringify(health));
 
+// --- 1b. the served app shell (tailnet devices need only the server URL) -------
+const shell = await fetch(`${BASE}/`);
+const shellHtml = shell.ok ? await shell.text() : '';
+shell.ok && shellHtml.includes('GRAB_DEFAULTS')
+  ? ok('/ serves the app shell (index.html)')
+  : bad(`/ → ${shell.status}, expected index.html`);
+const swRes = await fetch(`${BASE}/sw.js`);
+swRes.ok && (swRes.headers.get('content-type') || '').includes('javascript')
+  ? ok('/sw.js served as javascript (service worker can register)')
+  : bad(`/sw.js → ${swRes.status} ${swRes.headers.get('content-type')}`);
+for (const path of ['/server/.env', '/package.json', '/detect-baseline.json']) {
+  const r = await fetch(BASE + path);
+  r.status === 404 ? ok(`${path} → 404 (only the allowlisted shell is served)`)
+                   : bad(`${path} → ${r.status}, wanted 404`);
+}
+
 // --- 2. auth gate --------------------------------------------------------------
 const noKey = await fetch(`${BASE}/analyze`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ v: vid }) });

@@ -3487,8 +3487,13 @@ const GRAB_DEFAULTS=['https://thing3.tail8931ed.ts.net','http://127.0.0.1:8934']
 let grabResolved=null;               // the candidate that answered — remembered for the session
 function grabCandidates(){
   let saved=null; try{ saved=localStorage.getItem('cfy_grab'); }catch(e){}
-  // a saved override replaces the defaults (the user pointed us somewhere on purpose)
-  return (saved?[saved]:GRAB_DEFAULTS).map(u=>u.replace(/\/+$/,'')); // '…/'+'/health' would 404
+  // When the analysis server itself is serving this page (thing3), same-origin
+  // is ground truth — try it even after a saved override, so a stale saved URL
+  // can't strand a device that is literally talking to the server already.
+  const here=/^https?:$/.test(location.protocol)&&!/github\.io$/i.test(location.hostname)?[location.origin]:[];
+  // a saved override still goes first (the user pointed us somewhere on purpose)
+  const list=saved?[saved,...here]:[...here,...GRAB_DEFAULTS];
+  return [...new Set(list.map(u=>u.replace(/\/+$/,'')))]; // '…/'+'/health' would 404
 }
 function grabBase(){ return grabResolved||grabCandidates()[0]; }
 async function grabResolve(){

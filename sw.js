@@ -33,6 +33,11 @@ self.addEventListener('fetch', e => {
   // which the app already handles — the rest of it keeps working.
   if (url.origin !== self.location.origin) return;
 
+  // When the analysis server serves the app (thing3), its API is same-origin.
+  // Never cache it: /grab matched with ignoreSearch would glue one song's
+  // audio to every other song, and /health//job polls must never be stale.
+  if (/^\/(health$|grab$|analyze$|job\/|song\/)/.test(url.pathname)) return;
+
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const hit = await cache.match(req, {ignoreSearch: true});

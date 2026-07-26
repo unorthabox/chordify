@@ -8,7 +8,10 @@ lyrics. Then you play along: scrolling chord grid, fretboard diagrams, transpose
 capo, loops, a tuner and a metronome.
 
 **Live at [unorthabox.github.io/chordify](https://unorthabox.github.io/chordify/)** —
-add it to your iPhone home screen and it works offline.
+add it to your iPhone home screen and it works offline. Devices **on the
+tailnet** can skip Pages entirely: the analysis server serves the app itself at
+`https://thing3.tail8931ed.ts.net` — one link, same origin as the audio server,
+zero settings.
 
 No account. No API key. No build step. The one moving part is a home
 analysis server (see [`server/`](server/README.md)) that fetches audio — and soon

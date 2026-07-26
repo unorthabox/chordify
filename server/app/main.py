@@ -11,6 +11,10 @@ index.html works unmodified, and adds the v2 surface:
 Auth: X-Chordify-Key header (or ?k=) on the v2 endpoints. /health and /grab
 stay keyless for v1-client compatibility; require the key on /grab too once
 the Phase-2 client sends it. The key lives in server/.env (auto-generated).
+
+Also serves the PWA shell itself (an allowlist of files from the repo root),
+so a tailnet device needs only https://thing3.…ts.net — no settings, and the
+client's same-origin probe finds the server automatically.
 """
 from __future__ import annotations
 
@@ -146,3 +150,36 @@ async def song_stem(req: Request, v: str, name: str, k: str | None = None):
     if not f.exists():
         raise HTTPException(404, "stem not ready")
     return FileResponse(f, media_type="audio/mp4")  # FileResponse honours Range
+
+
+# ── the app itself ────────────────────────────────────────────────────────────
+# Serve the PWA shell so tailnet devices need only https://thing3.…ts.net —
+# same-origin, so the client's grab probe finds the server with zero settings.
+# A strict allowlist, not a static mount: the repo root also holds server/.env
+# and the working tree, none of which may ever be reachable. These routes are
+# registered last, so the API always matches first.
+
+SITE = ROOT.parent  # the repo root (server/ 's parent)
+SHELL_FILES = {
+    "index.html": "text/html; charset=utf-8",
+    "sw.js": "text/javascript; charset=utf-8",
+    "manifest.webmanifest": "application/manifest+json",
+    "icon-180.png": "image/png",
+    "icon-192.png": "image/png",
+    "icon-512.png": "image/png",
+    "icon-maskable-512.png": "image/png",
+}
+_NO_CACHE = {"Cache-Control": "no-cache"}  # the service worker does its own caching
+
+
+@app.get("/")
+async def shell_index():
+    return FileResponse(SITE / "index.html",
+                        media_type=SHELL_FILES["index.html"], headers=_NO_CACHE)
+
+
+@app.get("/{name}")
+async def shell_file(name: str):
+    if name not in SHELL_FILES:
+        raise HTTPException(404, "not found")
+    return FileResponse(SITE / name, media_type=SHELL_FILES[name], headers=_NO_CACHE)

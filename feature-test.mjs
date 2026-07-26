@@ -816,9 +816,11 @@ const grabSettings = await page.evaluate(() => {
   settingsOpen(false);
   return { saved, base1, cleared, base2 };
 });
+// cleared → the page's own origin leads the candidates (the thing3-serves-the-app
+// path: same-origin is ground truth); the tailnet default is next in line.
 grabSettings.saved === 'https://my-tunnel.trycloudflare.com' && grabSettings.base1 === grabSettings.saved
-  && grabSettings.cleared === null && grabSettings.base2.includes('thing3')
-  ? ok('settings server URL saves (slash-trimmed), and clearing falls back to the default server')
+  && grabSettings.cleared === null && grabSettings.base2 === 'http://127.0.0.1:8933'
+  ? ok('settings server URL saves (slash-trimmed), and clearing falls back to same-origin-first candidates')
   : bad('server-url settings: ' + JSON.stringify(grabSettings));
 
 // --- search fallback without an API key --------------------------------------
