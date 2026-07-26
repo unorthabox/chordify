@@ -1,0 +1,16 @@
+# Recreate the venv with:
+#   uv venv --python 3.11
+#   uv pip install torch==2.11.0 torchaudio==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu126
+#   uv pip install -r requirements.txt
+#
+# ORDER MATTERS: plain PyPI torch on Windows is CPU-only, and audio-separator's
+# resolver will happily "upgrade" a CUDA torch back to CPU. Install the cu126
+# trio first, then this file (whose pins keep the resolver off torch).
+# torchaudio's CUDA wheels stop at 2.11.0 (maintenance mode) — that caps the trio.
+torch==2.11.0+cu126
+torchaudio==2.11.0+cu126
+torchvision==0.26.0+cu126
+audio-separator[gpu]==0.44.5
+fastapi
+uvicorn[standard]
+pynvml
