@@ -6,11 +6,12 @@
  * that actually matters — the same decodeAudioData.
  *
  * The risk this exists to kill: `decodeAudioData` is the narrowest part of the whole
- * phone flow. yt-dlp WITHOUT ffmpeg writes a **DASH** m4a ("Only some players support
- * this container", it warns), and a-Shell on an iPhone has no ffmpeg. If WebKit can't
- * decode that container, the phone flow is dead on arrival and no amount of UI testing
- * would have told us. So this feeds it a real YouTube m4a, downloaded by real yt-dlp,
- * exactly as the phone would produce it.
+ * phone flow. The analysis server's /grab streams yt-dlp stdout — no ffmpeg fixup is
+ * possible on a stream, so the phone receives a **DASH** m4a ("Only some players
+ * support this container", yt-dlp warns). If WebKit can't decode that container, the
+ * phone flow is dead on arrival and no amount of UI testing would have told us. So
+ * this feeds it a real YouTube m4a, downloaded by real yt-dlp, exactly as the phone
+ * would receive it.
  *
  *   node ios-test.mjs                     # uses ./fixtures/*.m4a if present
  *   M4A=/path/to/cfy-<id>.m4a node ios-test.mjs
@@ -60,7 +61,7 @@ ok('app renders in WebKit at iPhone viewport');
 
 // --- 2. it knows it is on iOS -------------------------------------------------
 const plat = await page.evaluate(() => ({ isIOS: isIOS(), ua: navigator.userAgent.slice(0, 24) }));
-plat.isIOS ? ok('isIOS() true — the grab panel will show the a-Shell flow')
+plat.isIOS ? ok('isIOS() true — platform detection works on an iPhone UA')
            : bad('isIOS() false on an iPhone UA: ' + JSON.stringify(plat));
 
 // --- 3. the service worker — installability is the whole point -----------------
@@ -89,32 +90,30 @@ await page.evaluate(() => {
   trSave('dQw4w9WgXcQ', { lines: [{ t: 0, text: 'seed' }] });   // don't hit live lyrics APIs
 });
 
-// --- 4. the shortcut deep link + the #grabbed return trip ----------------------
-const link = await page.evaluate(() => grabShortcutUrl('dQw4w9WgXcQ'));
-link.startsWith('shortcuts://run-shortcut?name=Chordify%20Grab')
-  ? ok('step 1 deep-links the Chordify Grab shortcut')
-  : bad('bad shortcut url: ' + link);
+// --- 4. the Shortcut machinery is gone (server flow replaced it) ---------------
+const noShortcut = await page.evaluate(() =>
+  typeof window.grabShortcutUrl === 'undefined' && !document.getElementById('grabRunBtn'));
+noShortcut
+  ? ok('no Shortcut/a-Shell machinery — the analysis server is the audio path')
+  : bad('retired Shortcut machinery still present');
 
-const ret = await page.evaluate(async () => {
-  localStorage.setItem('cfy_pendgrab', 'dQw4w9WgXcQ');
-  window.dispatchEvent(new HashChangeEvent('hashchange'));
-  location.hash = '#grabbed';
-  await new Promise(r => setTimeout(r, 600));
-  return { panelOpen: document.getElementById('grabPanel').classList.contains('open'),
-           attached: yt.videoId,
-           hashCleared: location.hash !== '#grabbed' };
-});
-ret.panelOpen && ret.attached === 'dQw4w9WgXcQ' && ret.hashCleared
-  ? ok('returning from the Shortcut (#grabbed) re-attaches the video and reopens step 2')
-  : bad('#grabbed return trip: ' + JSON.stringify(ret));
-
-// --- 5. THE LOAD-BEARING CHECK: step 2, with a real yt-dlp m4a -----------------
+// --- 5. THE LOAD-BEARING CHECK: the file-pick fallback with a real yt-dlp m4a --
 // Everything else here is UI. This is the one that decides whether the phone works:
-// WebKit's decodeAudioData is the narrowest part of the whole flow.
-if (!m4a) {
+// WebKit's decodeAudioData is the narrowest part of the whole flow (the server path
+// and the fallback pick both end in the same decode).
+/* Playwright's WebKit build for Windows ships without Web Audio at all (no
+ * AudioContext) — the decode check can only run against the Linux build, whose
+ * GStreamer media stack matches what we care about. Skip loudly, never silently:
+ * on Windows the decode path must be verified on a real iPhone instead. */
+const hasWebAudio = await page.evaluate(
+  () => typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined');
+if (!hasWebAudio) {
+  skip('this WebKit build has NO Web Audio (Windows port). DECODE PATH NOT VERIFIED HERE.');
+  skip('   ^ verify on a real iPhone (or Linux WebKit). All non-audio iOS checks still ran.');
+} else if (!m4a) {
   skip('no m4a available (set M4A=/path/to/cfy-<id>.m4a). DECODE PATH NOT VERIFIED.');
 } else {
-  console.log(`\n  feeding the real file to "2 Chart It": ${m4a.split('/').pop()}\n`);
+  console.log(`\n  feeding the real file to "⤒ Pick Audio File": ${m4a.split('/').pop()}\n`);
   // the video must be attached, or step 2 has nothing to chart against
   await page.evaluate(async () => { await ytAttach('dQw4w9WgXcQ', 'Test Song', 'Test Channel'); });
 
