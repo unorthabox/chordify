@@ -1,6 +1,6 @@
 # Chordify
 
-Chord charts from any YouTube video, built on the phone, for free.
+Chord charts from any YouTube video, in one tap.
 
 Search a song → attach the video → tap **⚙ Process Song**. The app pulls the audio,
 detects the chords, tempo and key, syncs the chart to the video, and fetches the
@@ -10,7 +10,10 @@ capo, loops, a tuner and a metronome.
 **Live at [unorthabox.github.io/chordify](https://unorthabox.github.io/chordify/)** —
 add it to your iPhone home screen and it works offline.
 
-No server. No account. No API key. No build step. Nothing to pay for.
+No account. No API key. No build step. The one moving part is a home
+analysis server (see [`server/`](server/README.md)) that fetches audio — and soon
+separates stems and runs ML chord detection — reachable from every device over
+Tailscale HTTPS.
 
 ---
 
@@ -25,44 +28,25 @@ chord templates are matched against beat-synchronous chroma and decoded with Vit
 It reads major, minor, 7th, m7, maj7, sus2 and sus4 chords, and finds the tempo, the
 key and the offset that syncs the chart to the video.
 
-## The one awkward bit: getting the audio
+## Getting the audio
 
 Chord detection needs the song's raw audio, and **a browser cannot pull that off
-YouTube** — no CORS, and the streams are ciphered. So the audio has to come from
-somewhere else. There are two ways in.
+YouTube** — no CORS, and the streams are ciphered. The
+**[analysis server](server/README.md)** does it instead: an always-on FastAPI
+service on the home GPU box, reached over Tailscale HTTPS
+(`https://thing3.tail8931ed.ts.net`), so the same one-tap flow works on the
+iPhone, the iPad and any desktop. ⚙ Process Song asks the server for the audio,
+charts it, and that's the whole flow.
 
-### On the iPhone (no computer involved)
+If no server answers (off the tailnet, server down), the app falls back to a
+plain file picker: pick any m4a/mp3/wav of the song and it charts that instead.
+⚙ Settings → *Audio server URL* overrides the default if the server ever moves.
 
-The phone downloads it itself. [a-Shell](https://apps.apple.com/app/a-shell/id1473805438)
-(free) runs `yt-dlp` on the phone; a Shortcut wires it up. Setup is a one-time thing
-and it's written up in **[SETUP-PHONE.md](SETUP-PHONE.md)** (also mirrored in the app,
-under the grab panel's *SET IT UP* link).
-
-Then ⚙ Process Song opens a two-step panel:
-
-1. **Grab Audio** — hands the video to the Shortcut. a-Shell downloads the m4a and
-   bounces back to the app.
-2. **Chart It** — pick that file. The analyzer runs and the chart appears.
-
-This whole path is covered by `npm run test:ios`, which runs it in WebKit — Safari's
-own engine — against a real yt-dlp m4a. It works.
-
-**That second tap cannot be removed**, and it's worth knowing why before you try:
-iOS Safari has no Web Share Target, so a Shortcut *cannot* hand a file to a web app;
-and a little server running on the phone is out too, because iOS Safari blocks HTTPS
-pages from fetching `http://127.0.0.1` ([WebKit bug 171934](https://bugs.webkit.org/show_bug.cgi?id=171934),
-open since 2017). Every other browser allows it. So: two taps.
-
-### On a desktop (one tap)
-
-Run the optional helper and Process Song does everything in one tap, no file picking:
-
-```bash
-node grab-server.mjs        # listens on 127.0.0.1:8934, shells out to yt-dlp
-```
-
-It's a convenience, not a requirement. Point ⚙ Settings → *Audio grabber URL* at
-something else if you want to host it elsewhere.
+History note: before the server existed, the iPhone downloaded audio *itself*
+via an a-Shell + Shortcuts contraption (see git history for `SETUP-PHONE.md`).
+The server retired all of it — iOS Safari blocking HTTPS→`http://127.0.0.1`
+fetches ([WebKit bug 171934](https://bugs.webkit.org/show_bug.cgi?id=171934)) is
+why the server must be remote HTTPS rather than something running on the phone.
 
 ## Running it locally
 
@@ -95,20 +79,25 @@ npm run test:ios         # opt-in: the phone path, in Safari's engine
 ### The iOS suite
 
 WebKit is the engine Safari uses, and the only one iOS allows — so running the app
-there exercises the same code the iPhone runs. `ios-test.mjs` drives the real grab
-flow: the Shortcut deep link, the `#grabbed` return trip, and then the one that
-actually decides whether the phone works — **`decodeAudioData` on a real yt-dlp m4a.**
+there exercises the same code the iPhone runs. `ios-test.mjs` boots the app on an
+iPhone UA, proves the service worker installs, and then runs the one check that
+actually decides whether the phone works — **`decodeAudioData` on a real yt-dlp
+m4a** (the server streams yt-dlp output as-is, so the phone gets a DASH container).
 That is the narrowest part of the whole design, and no amount of UI testing would
 have told us about it.
 
 It's opt-in because it needs two things a clean checkout doesn't have:
 
 ```bash
-sudo env "PATH=$PATH" npx playwright install-deps webkit    # WebKit's system libs
+npx playwright install webkit          # on Linux also: npx playwright install-deps webkit
 mkdir -p fixtures && yt-dlp -f 'bestaudio[ext=m4a]/bestaudio' \
   -o 'fixtures/cfy-%(id)s.m4a' 'https://youtube.com/watch?v=<id>'
 npm run test:ios
 ```
+
+Caveat: Playwright's **Windows** WebKit build ships without Web Audio, so the
+decode check runs on Linux WebKit only (it skips loudly elsewhere) — the real
+iPhone is the source of truth for the decode path.
 
 `fixtures/` is gitignored; the suite finds any `.m4a` in there (or takes `M4A=`), and
 skips the decode checks loudly if there isn't one. Result on a real 3½-minute track:
@@ -162,11 +151,10 @@ gets wedged.
 - **Home-screen apps are exempt from iOS's 7-day storage eviction.** A Safari *tab*
   gets its `localStorage` purged after 7 days unused; an installed app doesn't. So the
   library is durable — but only once installed.
-- **Only YouTube needs the network.** Search, thumbnails and the iframe player are all
-  cross-origin; the service worker passes them straight through and never caches them.
-  Offline they fail and the app degrades. Playback of a chart, transpose, capo, the
-  tuner and export all work with no network at all.
-- **The iOS download stack churns.** `yt-dlp-apple-webkit-jsi` is what solves YouTube's
-  JS challenge using Apple's built-in engine (iOS forbids shipping your own). When
-  YouTube changes something, re-running the `pip install -U` line in a-Shell is almost
-  always the entire fix.
+- **Only YouTube (and the analysis server) need the network.** Search, thumbnails and
+  the iframe player are all cross-origin; the service worker passes them straight
+  through and never caches them. Offline they fail and the app degrades. Playback of a
+  chart, transpose, capo, the tuner and export all work with no network at all.
+- **YouTube's download stack churns.** When Process Song stops fetching audio, the fix
+  is almost always just updating yt-dlp on the server — which happens automatically on
+  every service start (`uv tool upgrade yt-dlp` in `server/start.ps1`).

@@ -311,39 +311,30 @@ const processGuards = await page.evaluate(async () => {
   await ytAttach('vid-guard0000', 'Guard Video', 'Chan');
   await new Promise(r => setTimeout(r, 30));
   st.song = null; st.cells = [];
+  grabResolved = null;                      // forget any server found earlier
   const origFetch = window.fetch;
-  window.fetch = (u, o) => String(u).includes(':8934')
-    ? Promise.reject(new TypeError('connection refused'))
+  window.fetch = (u, o) => /\/health$|\/grab\?/.test(String(u))
+    ? Promise.reject(new TypeError('connection refused'))   // every candidate down
     : origFetch(u, o);
   document.getElementById('ytSyncBtn').click();
   for (let i = 0; i < 40 && document.getElementById('ytSyncBtn').disabled; i++)
     await new Promise(r => setTimeout(r, 50));
-  window.fetch = origFetch;
+  window.fetch = origFetch; grabResolved = null;
   const noChart = document.getElementById('statusTxt').textContent;
   return { noVideo, noChart, noSongCreated: !st.song,
            panelOpen: document.getElementById('grabPanel').classList.contains('open'),
-           shortcutUrl: grabShortcutUrl('vid-guard0000'),
-           isIOS: isIOS(),
            hint: document.getElementById('grabHint').textContent,
-           runDisabled: document.getElementById('grabRunBtn').disabled,
            btnRestored: document.getElementById('ytSyncBtn').textContent.includes('Process Song') };
 });
 processGuards.noVideo.includes('ATTACH A YOUTUBE VIDEO')
   ? ok('⚙ Process Song with no video attached asks the user to attach one')
   : bad('no-video guard status: ' + processGuards.noVideo);
 processGuards.panelOpen && processGuards.noSongCreated && processGuards.btnRestored
-  ? ok('⚙ Process Song with no grabber opens the grab panel (no server needed)')
-  : bad('no-grabber fallback: ' + JSON.stringify(processGuards));
-// step 1 deep-links an iOS Shortcut, so off-iOS it is dead. This browser is a
-// desktop: the copy must say so and the button must be disabled, not dangled.
-!processGuards.isIOS && processGuards.runDisabled
-  && processGuards.hint.includes('IPHONE-ONLY') && processGuards.noChart.includes('grab-server')
-  ? ok('no-grabber fallback on a DESKTOP explains the desktop fix, not iPhone instructions')
-  : bad('desktop grab panel: ' + JSON.stringify(processGuards));
-processGuards.shortcutUrl.startsWith('shortcuts://run-shortcut?name=Chordify%20Grab')
-  && processGuards.shortcutUrl.includes(encodeURIComponent('https://www.youtube.com/watch?v=vid-guard0000'))
-  ? ok('grab step 1 deep-links the Chordify Grab shortcut with the video URL')
-  : bad('shortcut deep link: ' + processGuards.shortcutUrl);
+  ? ok('⚙ Process Song with no server opens the pick-a-file fallback panel')
+  : bad('no-server fallback: ' + JSON.stringify(processGuards));
+processGuards.hint.includes('SETTINGS') && processGuards.noChart.includes('AUDIO SERVER')
+  ? ok('fallback copy points at the server URL setting — no retired grab-server/Shortcut instructions')
+  : bad('fallback copy: ' + JSON.stringify(processGuards));
 
 // --- grab step 2: the picked file charts the attached video ------------------
 const grabImport = await page.evaluate(async () => {
@@ -373,36 +364,18 @@ const grabImport = await page.evaluate(async () => {
   };
 });
 grabImport.videoId === 'vid-guard0000' && grabImport.bpm === 120 && grabImport.beatsAreBeats
-  && grabImport.saved === 1 && grabImport.panelClosed && grabImport.offset === 1.5
+  && grabImport.saved === 1 && grabImport.panelClosed && grabImport.offset === 0
   && grabImport.status.includes('AUTO-CHARTED')
-  ? ok('grab step 2 charts the picked file, attaches it to the video, and saves it')
+  ? ok('grab step 2 charts the picked file, attaches it to the video, and saves it (offset 0 — chart starts at video 0)')
   : bad('grab import: ' + JSON.stringify(grabImport));
-
-// --- returning from the shortcut (#grabbed) puts you on step 2 ---------------
-const grabbedReturn = await page.evaluate(async () => {
-  st.song = null; st.cells = [];
-  st.imported = []; localStorage.removeItem('cfy_imported');
-  localStorage.setItem('cfy_pendgrab', 'vid-guard0000');
-  location.hash = '#grabbed';
-  await new Promise(r => setTimeout(r, 250));   // hashchange → checkGrabbedHash (async: may re-attach)
-  return {
-    panelOpen: document.getElementById('grabPanel').classList.contains('open'),
-    msg: document.getElementById('grabMsg').textContent,
-    pendCleared: !localStorage.getItem('cfy_pendgrab'),
-    hashCleared: location.hash === '',
-  };
-});
-grabbedReturn.panelOpen && grabbedReturn.msg.includes('cfy-vid-guard0000.m4a')
-  && grabbedReturn.pendCleared && grabbedReturn.hashCleared
-  ? ok('returning from the grab shortcut (#grabbed) reopens the panel on step 2')
-  : bad('#grabbed return: ' + JSON.stringify(grabbedReturn));
 
 // --- one button: Process Song fetches lyrics when missing, skips when cached --
 const oneBtn = await page.evaluate(async () => {
   window.__origRefetch = refetchLyrics;
+  grabResolved = null;
   const origFetch = window.fetch;
-  window.fetch = (u, o) => String(u).includes(':8934')
-    ? Promise.reject(new TypeError('connection refused'))   // keep the grabber out of this test
+  window.fetch = (u, o) => /\/health$|\/grab\?/.test(String(u))
+    ? Promise.reject(new TypeError('connection refused'))   // keep the server out of this test
     : origFetch(u, o);
   let calls = 0;
   refetchLyrics = async () => { calls++; };
@@ -443,6 +416,20 @@ Math.abs(dragOff.afterRight - 7) < 0.01 && dragOff.lcdRight === '7.00'
 dragOff.afterClamp === 0
   ? ok('dragging OFFSET below zero clamps at 0')
   : bad('offset clamp: ' + dragOff.afterClamp);
+
+// --- ⏱ SET START: current playhead becomes the offset (manual escape hatch) ---
+const setStart = await page.evaluate(() => {
+  const prevPlayer = CFY.yt.player;
+  CFY.yt.player = { getCurrentTime: () => 12.34 };
+  document.getElementById('ytSetStartBtn').click();
+  const r = { offset: CFY.yt.offset, lcd: document.getElementById('ytOffLcd').textContent,
+              status: document.getElementById('statusTxt').textContent };
+  CFY.yt.player = prevPlayer;
+  return r;
+});
+Math.abs(setStart.offset - 12.34) < 0.01 && setStart.lcd === '12.34' && setStart.status.includes('START SET')
+  ? ok('⏱ SET START captures the playhead as the offset (12.34s) with a confirming status')
+  : bad('set start: ' + JSON.stringify(setStart));
 
 const dragBpm = await page.evaluate(async () => {
   st.song.bpm = 100; updateYtBpmLcd();
@@ -505,10 +492,11 @@ await page.evaluate(async () => {
   wstr(36, 'data'); dv.setUint32(40, pcm.length * 2, true);
   new Int16Array(wav, 44).set(pcm);
   window.__origFetchAC = window.fetch;
+  grabResolved = null;             // make grabResolve() probe our stub, whatever host it tries
   window.fetch = (u, o) => {
     const s = String(u);
-    if (s.includes(':8934/health')) return Promise.resolve({ ok: true, json: async () => ({ ok: true, ytdlp: 'stub' }) });
-    if (s.includes(':8934/grab')) return Promise.resolve({ ok: true, arrayBuffer: async () => wav });
+    if (/\/health$/.test(s)) return Promise.resolve({ ok: true, json: async () => ({ ok: true, ytdlp: 'stub' }) });
+    if (/\/grab\?/.test(s)) return Promise.resolve({ ok: true, arrayBuffer: async () => wav });
     return window.__origFetchAC(u, o);
   };
   document.getElementById('ytSyncBtn').click();
@@ -518,7 +506,7 @@ await page.evaluate(async () => {
     await new Promise(r => setTimeout(r, 100));
 });
 const autoChart = await page.evaluate(() => {
-  window.fetch = window.__origFetchAC;
+  window.fetch = window.__origFetchAC; grabResolved = null;   // forget the stub server
   return {
     hasSong: !!st.song,
     artist: st.song ? st.song.artist : null,
@@ -829,9 +817,9 @@ const grabSettings = await page.evaluate(() => {
   return { saved, base1, cleared, base2 };
 });
 grabSettings.saved === 'https://my-tunnel.trycloudflare.com' && grabSettings.base1 === grabSettings.saved
-  && grabSettings.cleared === null && grabSettings.base2.includes('127.0.0.1:8934')
-  ? ok('settings grabber URL saves (slash-trimmed), and clearing falls back to the desktop default')
-  : bad('grabber settings: ' + JSON.stringify(grabSettings));
+  && grabSettings.cleared === null && grabSettings.base2.includes('thing3')
+  ? ok('settings server URL saves (slash-trimmed), and clearing falls back to the default server')
+  : bad('server-url settings: ' + JSON.stringify(grabSettings));
 
 // --- search fallback without an API key --------------------------------------
 const search = await page.evaluate(async () => {
@@ -928,9 +916,9 @@ dedupe.idKept && dedupe.stillFav
 
 await browser.close();
 
-// --- the grab panel on an actual iPhone UA ------------------------------------
-// The desktop copy was asserted above; this proves the iOS branch still says the
-// iPhone thing, since that is the platform the whole flow exists for.
+// --- the fallback panel on an actual iPhone UA ---------------------------------
+// One flow on every platform now: the panel is the same pick-a-file fallback, and
+// nothing on it references the retired Shortcut/a-Shell machinery.
 const iBrowser = await chromium.launch();
 const iCtx = await iBrowser.newContext({
   userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 '
@@ -945,11 +933,12 @@ const ios = await iPage.evaluate(() => {
   grabPanelOpen(true);
   return { isIOS: isIOS(),
            hint: document.getElementById('grabHint').textContent,
-           runDisabled: document.getElementById('grabRunBtn').disabled };
+           pickVisible: !!document.getElementById('grabPickBtn'),
+           shortcutGone: !document.getElementById('grabRunBtn') && typeof window.grabShortcutUrl === 'undefined' };
 });
-ios.isIOS && !ios.runDisabled && ios.hint.includes('A-SHELL')
-  ? ok('on an iPhone UA the grab panel keeps the Shortcut/a-Shell instructions and step 1 is live')
-  : bad('iOS grab panel: ' + JSON.stringify(ios));
+ios.isIOS && ios.pickVisible && ios.shortcutGone && ios.hint.includes('AUDIO SERVER')
+  ? ok('on an iPhone UA the fallback panel is the same pick-a-file flow — Shortcut machinery is gone')
+  : bad('iOS fallback panel: ' + JSON.stringify(ios));
 await iBrowser.close();
 
 console.log('\npage errors: ' + (errors.length ? JSON.stringify(errors) : 'none'));
