@@ -409,22 +409,28 @@
   }
   .sec-label::after{content:"";flex:1;height:1px;
     background:repeating-linear-gradient(90deg,var(--scr-line) 0 3px,transparent 3px 7px)}
-  .cells{display:flex;flex-wrap:wrap;gap:6px}
+  /* four big chords to a row — you read the next bar or so, not the whole song.
+     the grid scrolls like the lyrics do; autoscroll keeps the active row centred */
+  .cells{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
   .cell{
-    min-width:86px;
+    min-width:0;
     border:1px solid var(--scr-line);
     border-radius:3px;
     background:var(--fill-2);
-    padding:7px 9px 5px;
+    padding:12px 10px 9px;
     cursor:pointer;
     color:var(--scr-ink);
-    display:flex;flex-direction:column;gap:3px;align-items:center;
+    display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;
     transition:background .1s,border-color .1s;
   }
   .cell:hover{background:var(--phos-ghost);border-color:var(--scr-ink)}
-  .cell .cname{font-family:var(--crt);font-size:22px;line-height:1}
-  .cell .beats{font-family:var(--crt);font-size:12px;color:var(--scr-dim);letter-spacing:.3em;line-height:1}
-  .cell svg{opacity:.72}
+  .cell .cname{font-family:var(--crt);font-size:34px;line-height:1}
+  .cell .beats{font-family:var(--crt);font-size:13px;color:var(--scr-dim);letter-spacing:.3em;line-height:1}
+  @media (max-width:640px){
+    .cells{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .cell .cname{font-size:26px}
+  }
+  .cell svg{opacity:.95}
   /* terminal selection: an inverted block */
   .cell.active{
     background:var(--scr-ink);color:var(--scr);border-color:var(--scr-ink);
@@ -460,13 +466,65 @@
   #grid{overflow-y:auto;padding-right:6px;
     scrollbar-width:thin;scrollbar-color:var(--scr-dim) transparent;scroll-behavior:smooth}
 
-  /* ── split screen: lyrics on top, chords below, both visible together ── */
-  .crt-pane{display:flex;flex-direction:column;min-height:0}
-  .crt-pane + .crt-pane{margin-top:14px;padding-top:14px;border-top:1px solid var(--scr-line)}
+  /* ── chordify-style views: one pane at a time, picked by the tab strip ── */
+  .crt-pane{display:none;flex-direction:column;min-height:0}
+  .crt-pane.on{display:flex}
   .pane-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
   .pane-title{font-size:10px;letter-spacing:.26em;color:var(--scr-dim);text-transform:uppercase}
-  #lyricsPane #lyrics{height:16vh;max-height:16vh}
-  #chordsPane #grid{height:48vh;max-height:48vh}
+  #lyricsPane #lyrics{height:52vh;max-height:52vh}
+  #chordsPane #grid{height:52vh;max-height:52vh}
+  .crt-tabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+  .crt-tab{
+    font-family:var(--crt);font-size:16px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--scr-dim);background:none;border:1px solid var(--scr-line);border-radius:3px;
+    padding:4px 16px;cursor:pointer;transition:color .1s,border-color .1s,background .1s;
+  }
+  .crt-tab:hover{color:var(--scr-ink);border-color:var(--scr-ink)}
+  .crt-tab:focus-visible{outline:2px solid var(--phos);outline-offset:2px}
+  .crt-tab.lit{background:var(--scr-ink);color:var(--scr);border-color:var(--scr-ink);
+    box-shadow:0 0 18px -6px var(--scr-ink)}
+
+  /* ── the playbar: the chord timeline slides under a fixed playhead ── */
+  #playbar{position:relative;height:66px;margin-bottom:10px;cursor:pointer;
+    border:1px solid var(--scr-line);background:rgba(0,0,0,.45);overflow:hidden}
+  #pbInner{position:absolute;top:7px;bottom:7px;left:0;display:flex;will-change:transform}
+  .pb-block{
+    flex:none;box-sizing:border-box;border:1px solid var(--scr-line);border-left:none;
+    display:flex;align-items:center;justify-content:center;overflow:hidden;
+    color:var(--scr-ink);background:var(--fill-2);
+  }
+  .pb-block:first-child{border-left:1px solid var(--scr-line)}
+  .pb-block .n{font-family:var(--crt);font-size:19px;line-height:1;white-space:nowrap}
+  .pb-block.nc{color:var(--scr-dim)}
+  .pb-block.active{background:var(--scr-ink);color:var(--scr);box-shadow:0 0 22px -4px var(--scr-ink)}
+  #pbHead{position:absolute;top:0;bottom:0;left:25%;width:2px;z-index:2;pointer-events:none;
+    background:var(--scr-ink);box-shadow:0 0 12px var(--phos-ghost)}
+  #pbHead::after{content:"▾";position:absolute;top:-3px;left:-5px;color:var(--scr-ink);
+    font-size:10px;line-height:1}
+
+  /* ── diagrams view: every chord in the song as a full chart ── */
+  #diagList{
+    display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;
+    overflow-y:auto;max-height:52vh;padding-right:6px;
+    scrollbar-width:thin;scrollbar-color:var(--scr-dim) transparent;
+  }
+  .dg-card{
+    border:1px solid var(--scr-line);border-radius:3px;background:var(--fill-2);
+    padding:10px 8px 8px;cursor:pointer;color:var(--scr-ink);
+    display:flex;flex-direction:column;align-items:center;gap:4px;
+    transition:background .1s,border-color .1s;
+  }
+  .dg-card:hover{background:var(--phos-ghost);border-color:var(--scr-ink)}
+  .dg-card.active{border-color:var(--scr-ink);background:var(--phos-ghost);
+    box-shadow:0 0 20px -6px var(--scr-ink)}
+  .dg-name{font-family:var(--crt);font-size:24px;line-height:1}
+  .dg-sub{font-size:8.5px;letter-spacing:.14em;color:var(--scr-dim);text-transform:uppercase;
+    text-align:center;line-height:1.5}
+
+  /* chords riding above the lyric words (chordify-style lyrics view) */
+  .tr-line .lw i{font-size:15px;font-family:var(--crt)}
+  .tr-line.cur .lw i,.tr-line.cur .lw b{color:var(--bg)}
+  .tr-intro{color:var(--scr-ink)}
   #lyrics{overflow-y:auto;padding:4px 6px 4px 2px;font-family:var(--crt);
     scrollbar-width:thin;scrollbar-color:var(--scr-dim) transparent}
   #lyrics .lyr-sec{color:var(--scr-dim);font-size:12px;letter-spacing:.26em;margin:16px 0 10px;
@@ -481,7 +539,11 @@
   /* ================================================================
      TRANSPORT
   ================================================================ */
-  #transport{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  /* the control board pins below the top edge while you scroll — play/pause is
+     always in reach, chordify-style. sticky keeps it a glass sibling, so the
+     backdrop-filter rule (no filtered ancestors) still holds. */
+  #transport{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    position:sticky;top:10px;z-index:40}
   #transport .grp{display:flex;align-items:center;gap:7px}
   #transport .sep{width:1px;height:30px;background:var(--line);margin:0 2px}
   #playBtn{min-width:96px}
@@ -707,8 +769,7 @@
     }
     #songlist li{padding:12px 10px;gap:6px}
     #songlist li .t{font-size:14px}
-    .cell{min-width:96px;min-height:58px;padding:9px 10px 7px}
-    .cell .cname{font-size:24px}
+    .cell{min-height:72px}   /* columns size the width; keep a comfortable tap target */
     .switch .track{width:44px;height:26px}
     .switch .track::after{width:18px;height:18px;top:3px;left:3px}
     .switch input:checked + .track::after{left:22px}
@@ -853,7 +914,7 @@
         <label class="switch" id="countInSw" title="Count-in ★"><input type="checkbox" id="countIn"><span class="track"></span>COUNT-IN</label>
         <label class="switch"><input type="checkbox" id="autoScroll" checked><span class="track"></span>AUTOSCROLL</label>
         <div class="sep"></div>
-        <label class="switch"><input type="checkbox" id="simplifySw" checked><span class="track"></span>SIMPLIFY CHORDS</label>
+        <label class="switch"><input type="checkbox" id="simplifySw"><span class="track"></span>SIMPLIFY CHORDS</label>
         <label class="switch"><input type="checkbox" id="miniDiagSw" checked><span class="track"></span>MINI DIAGRAMS</label>
         <div class="vu" id="vu" aria-hidden="true">
           <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
@@ -882,6 +943,10 @@
       </div>
 
       <div id="crt">
+        <div id="playbar" title="Chord timeline — click to seek" style="display:none">
+          <div id="pbInner"></div>
+          <div id="pbHead"></div>
+        </div>
         <div id="refine" role="slider" tabindex="0" aria-label="Song position"
              aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="Click to seek">
           <div id="refineTop">
@@ -893,14 +958,21 @@
             <div id="refineTicks"></div>
           </div>
         </div>
+        <div class="crt-tabs" id="crtTabs" role="tablist" aria-label="View">
+          <button class="crt-tab lit" data-view="chords" aria-pressed="true">▦ Chords</button>
+          <button class="crt-tab" data-view="diagrams" aria-pressed="false">✻ Diagrams</button>
+          <button class="crt-tab" data-view="lyrics" aria-pressed="false">♪ Lyrics</button>
+        </div>
+        <div id="chordsPane" class="crt-pane on">
+          <div id="grid"></div>
+        </div>
+        <div id="diagramsPane" class="crt-pane">
+          <div id="diagList"></div>
+        </div>
         <div id="lyricsPane" class="crt-pane">
-          <div class="pane-head"><span class="pane-title">♪ Lyrics</span>
+          <div class="pane-head"><span class="pane-title">♪ Lyrics + Chords</span>
             <button class="btn" id="lyrEditBtn" title="Edit lyrics, or paste a YouTube transcript">✎</button></div>
           <div id="lyrics"></div>
-        </div>
-        <div id="chordsPane" class="crt-pane">
-          <div class="pane-head"><span class="pane-title">▦ Chords</span></div>
-          <div id="grid"></div>
         </div>
         <div id="lyrEdit">
           <div class="le-box">
@@ -984,7 +1056,7 @@
     </section>
   </main>
 
-  <footer>Property of Colton.ink · <b>Terminal 0077</b> · Unauthorized access will be logged</footer>
+  <footer>Property of Colton.ink · <b>Terminal 0077</b> · Build <span id="buildTag">2026-07-27.2</span> · Unauthorized access will be logged</footer>
 
   <!-- settings overlay -->
   <div id="settings" role="dialog" aria-label="Settings">
@@ -998,6 +1070,11 @@
         <span class="lbl2">Phosphor tube</span>
         <button class="btn" id="stPhosBtn">Green</button>
       </div>
+      <div class="st-row">
+        <span class="lbl2">App build <b id="stBuild" style="color:var(--phos)"></b></span>
+        <button class="btn" id="stUpdateBtn" title="Wipe the app cache and reload the newest version">⟳ Force update</button>
+      </div>
+      <div class="st-hint" style="margin-top:-6px">THE APP PULLS THE NEWEST VERSION EVERY LAUNCH. IF A DEVICE EVER LOOKS STALE, FORCE UPDATE WIPES THE CACHE AND RELOADS — CHECK THE BUILD NUMBER MATCHES THE FOOTER ON THE DEV MACHINE.</div>
       <div class="st-row">
         <span class="lbl2">Push-to-talk key</span>
         <button class="btn" id="stPttBtn">Tap to set…</button>
@@ -1212,41 +1289,85 @@ function mandoShape(sym){ return stringedShape(sym,MANDO_TUNING,7); }
    SVG DIAGRAM RENDERERS  (phosphor style)
 ================================================================ */
 /* diagrams paint in currentColor so they invert with the cell and follow the theme */
+/* which finger goes where — the standard heuristic: a barre (two-plus strings on
+   the lowest fretted fret with notes above it) takes finger 1, everything else is
+   dealt out low-fret-first, bass-string-first */
+function fingersFor(frets){
+  const out=frets.map(()=>0);
+  const fretted=frets.map((f,i)=>({f,i})).filter(x=>x.f>0);
+  if(!fretted.length) return out;
+  const minF=Math.min(...fretted.map(x=>x.f));
+  const atMin=fretted.filter(x=>x.f===minF);
+  let next=1;
+  const barre=atMin.length>=2&&fretted.length>atMin.length;
+  if(barre){ atMin.forEach(x=>out[x.i]=1); next=2; }
+  fretted.filter(x=>!(barre&&x.f===minF))
+    .sort((a,b)=>a.f-b.f||a.i-b.i)
+    .forEach(x=>{ out[x.i]=Math.min(4,next++); });
+  return out;
+}
 function fretDiagramSVG(shape,strings,w,h,mini){
   if(!shape) return '';
   const frets=shape.frets;
+  const fingers=fingersFor(frets);
+  // a barre = every finger-1 string pinned on the same fret → draw one bar, not dots
+  const b1=frets.map((f,i)=>({f,i})).filter(x=>x.f>0&&fingers[x.i]===1);
+  const barre=(b1.length>=2&&b1.every(x=>x.f===b1[0].f))?b1:null;
   const played=frets.filter(f=>f>0);
   const minF=played.length?Math.min(...played):1;
   const maxF=played.length?Math.max(...played):4;
   const start=(maxF<=4)?1:minF;
   const nFrets=Math.max(4,maxF-start+1);
-  const padX=mini?6:22, padT=mini?8:26, padB=mini?4:14;
+  const padX=mini?7:22, padT=mini?11:26, padB=mini?5:14;
   const gw=w-padX*2, gh=h-padT-padB;
+  const px=v=>Math.round(v-0.5)+0.5;   // half-pixel snap = crisp 1px strokes, no blur
   const sx=i=>padX+gw*i/(strings-1);
   const fy=f=>padT+gh*f/nFrets;
+  const dotR=mini?(w>=80?4.4:3.4):6.5;
   let s='<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" role="img" aria-label="chord diagram">';
-  // frets
+  // frets — the nut stays a thick solid bar; inner frets snap to the pixel grid
   for(let f=0;f<=nFrets;f++){
-    const yy=fy(f);
-    const thick=(f===0&&start===1)?(mini?2:4):1;
-    s+='<line x1="'+padX+'" y1="'+yy+'" x2="'+(w-padX)+'" y2="'+yy+'" stroke="currentColor" stroke-opacity="'+(thick>1?'.85':'.4')+'" stroke-width="'+thick+'"/>';
+    const thick=(f===0&&start===1)?(mini?3:4):1;
+    const yy=thick>1?fy(f):px(fy(f));
+    s+='<line x1="'+px(sx(0))+'" y1="'+yy+'" x2="'+px(sx(strings-1))+'" y2="'+yy+
+       '" stroke="currentColor" stroke-opacity="'+(thick>1?'.9':'.55')+'" stroke-width="'+thick+'"'+
+       (thick>1?'':' shape-rendering="crispEdges"')+'/>';
   }
   // strings
   for(let i=0;i<strings;i++)
-    s+='<line x1="'+sx(i)+'" y1="'+padT+'" x2="'+sx(i)+'" y2="'+(h-padB)+'" stroke="currentColor" stroke-opacity=".4" stroke-width="1"/>';
-  // position label
-  if(start>1&&!mini)
-    s+='<text x="'+(w-2)+'" y="'+(fy(1)-2)+'" fill="currentColor" fill-opacity=".75" font-size="10" font-family="monospace" text-anchor="end">'+start+'fr</text>';
-  if(start>1&&mini)
-    s+='<text x="'+w+'" y="'+(fy(1))+'" fill="currentColor" fill-opacity=".75" font-size="7" font-family="monospace" text-anchor="end">'+start+'</text>';
-  // dots / markers
+    s+='<line x1="'+px(sx(i))+'" y1="'+fy(0)+'" x2="'+px(sx(i))+'" y2="'+fy(nFrets)+
+       '" stroke="currentColor" stroke-opacity=".55" stroke-width="1" shape-rendering="crispEdges"/>';
+  // position label left of the first shown fret (chordify-style — clear of the barre)
+  if(start>1)
+    s+='<text x="'+(padX-(mini?2:6))+'" y="'+(fy(0.5)+3)+'" fill="currentColor" fill-opacity=".85" font-size="'+
+       (mini?7:10)+'" font-family="monospace" text-anchor="end">'+start+(mini?'':'fr')+'</text>';
+  // open / muted markers above the nut — minis get them too, smaller
   for(let i=0;i<strings;i++){
     const f=frets[i];
-    if(f<0){ if(!mini) s+='<text x="'+sx(i)+'" y="'+(padT-8)+'" fill="currentColor" fill-opacity=".5" font-size="11" font-family="monospace" text-anchor="middle">×</text>'; continue; }
-    if(f===0){ if(!mini) s+='<circle cx="'+sx(i)+'" cy="'+(padT-12)+'" r="4" fill="none" stroke="currentColor" stroke-width="1.4"/>'; continue; }
+    if(f<0) s+='<text x="'+sx(i)+'" y="'+(padT-(mini?3:8))+'" fill="currentColor" fill-opacity=".6" font-size="'+
+      (mini?7:11)+'" font-family="monospace" text-anchor="middle">×</text>';
+    else if(f===0) s+='<circle cx="'+sx(i)+'" cy="'+(padT-(mini?5:12))+'" r="'+(mini?1.8:4)+
+      '" fill="none" stroke="currentColor" stroke-opacity=".8" stroke-width="'+(mini?1:1.4)+'"/>';
+  }
+  // the barre bar, chordify-style: one rounded bar with the finger number at each end
+  if(barre&&barre[0].f>=start){
+    const yB=fy(barre[0].f-start+0.5);
+    const x0=sx(Math.min(...barre.map(x=>x.i))), x1=sx(Math.max(...barre.map(x=>x.i)));
+    s+='<rect x="'+(x0-dotR)+'" y="'+(yB-dotR)+'" width="'+(x1-x0+2*dotR)+'" height="'+(2*dotR)+
+       '" rx="'+dotR+'" fill="currentColor"'+(mini?'':' filter="url(#glow)"')+'/>';
+    if(!mini)
+      s+='<text x="'+x0+'" y="'+(yB+3)+'" fill="var(--scr)" font-size="9" font-weight="bold" font-family="monospace" text-anchor="middle">1</text>'+
+         '<text x="'+x1+'" y="'+(yB+3)+'" fill="var(--scr)" font-size="9" font-weight="bold" font-family="monospace" text-anchor="middle">1</text>';
+  }
+  // finger dots
+  for(let i=0;i<strings;i++){
+    const f=frets[i];
+    if(f<=0) continue;
+    if(barre&&fingers[i]===1&&f===barre[0].f) continue;   // covered by the bar
     const yy=fy(f-start+0.5);
-    const r=mini?2.4:6.5;
-    s+='<circle cx="'+sx(i)+'" cy="'+yy+'" r="'+r+'" fill="currentColor"'+(mini?'':' filter="url(#glow)"')+'/>';
+    s+='<circle cx="'+sx(i)+'" cy="'+yy+'" r="'+dotR+'" fill="currentColor"'+(mini?'':' filter="url(#glow)"')+'/>';
+    if(!mini&&fingers[i])
+      s+='<text x="'+sx(i)+'" y="'+(yy+3)+'" fill="var(--scr)" font-size="9" font-weight="bold" font-family="monospace" text-anchor="middle">'+fingers[i]+'</text>';
   }
   if(!mini) s='<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'"><defs><filter id="glow"><feGaussianBlur stdDeviation="1.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>'+s.slice(s.indexOf('>')+1);
   return s+'</svg>';
@@ -1296,7 +1417,11 @@ const st={
   favs:(()=>{try{return new Set(JSON.parse(localStorage.getItem('cfy_favs')||'[]'));}catch(e){return new Set();}})(),
   setlists:(()=>{try{return JSON.parse(localStorage.getItem('cfy_sets')||'{}');}catch(e){return {};}})(),
   libTab:'all', search:'', openSet:null,
-  simplify:true, showMini:true,
+  /* exact chords by default — SIMPLIFY is an opt-in that sticks across reloads */
+  simplify:(()=>{try{return localStorage.getItem('cfy_simplify')==='1';}catch(e){return false;}})(),
+  showMini:true,
+  view:(()=>{try{const v=localStorage.getItem('cfy_view');
+    return v==='diagrams'||v==='lyrics'?v:'chords';}catch(e){return 'chords';}})(),
   imported:(()=>{try{return JSON.parse(localStorage.getItem('cfy_imported')||'[]');}catch(e){return [];}})(),
   buffer:null
 };
@@ -1371,7 +1496,7 @@ function renderGrid(){
     let inner='<div class="cname">'+sym+'</div>';
     if(cell.sym!=='N.C.'&&st.showMini){
       const shp=miniShape(shapeSym(cell.sym));
-      if(shp) inner+=fretDiagramSVG(shp,st.inst==='gtr'?6:4,46,34,true);
+      if(shp) inner+=fretDiagramSVG(shp,st.inst==='gtr'?6:4,92,72,true);
     }
     const dots=st.mode==='audio'
       ? cell.dur.toFixed(1)+'s'
@@ -1385,6 +1510,8 @@ function renderGrid(){
   grid.innerHTML=''; grid.appendChild(frag);
   markLoopCells();
   buildRefineTicks();
+  renderPlaybar();
+  renderDiagrams();
 }
 
 /* ---- refinement bar: progress readout + seek target ---- */
@@ -1420,6 +1547,75 @@ function updateRefine(p){
     else if(e.key==='ArrowLeft'){e.preventDefault();seek(posNow()-step);}
   });
 })();
+
+/* ---- playbar: the chord ribbon slides under a fixed playhead (chordify-style) ---- */
+const pbar=$('playbar'), pbInner=$('pbInner');
+const PB_HEAD=0.25;      // playhead sits a quarter in — a glance back, a long look ahead
+let pbPPU=26;            // px per unit (beat in synth/yt, second on tape)
+function renderPlaybar(){
+  if(!st.song||!st.cells.length){ pbInner.innerHTML=''; pbar.style.display='none'; return; }
+  pbar.style.display='';
+  pbPPU=st.mode==='audio'?30:26;
+  let h='';
+  st.cells.forEach((c,i)=>{
+    const sym=c.sym==='N.C.'?'N.C.':shownSym(c.sym);
+    h+='<div class="pb-block'+(c.sym==='N.C.'?' nc':'')+'" data-i="'+i+
+       '" style="width:'+(c.dur*pbPPU).toFixed(2)+'px"><span class="n">'+esc(sym)+'</span></div>';
+  });
+  pbInner.innerHTML=h;
+  updatePlaybar(posNow());
+}
+function updatePlaybar(p){
+  if(!st.song||pbar.style.display==='none') return;
+  pbInner.style.transform='translateX('+(pbar.clientWidth*PB_HEAD-p*pbPPU).toFixed(1)+'px)';
+}
+pbar.addEventListener('click',e=>{
+  if(!st.song) return;
+  const r=pbar.getBoundingClientRect();
+  seek(Math.max(0,Math.min(totalUnits(),posNow()+(e.clientX-r.left-r.width*PB_HEAD)/pbPPU)));
+});
+
+/* ---- diagrams view: one full chart per distinct chord in the song ---- */
+function renderDiagrams(){
+  const box=$('diagList');
+  if(!st.song){
+    box.innerHTML='<div class="empty-screen"><div class="big">AWAITING SIGNAL</div>'+
+      '<div class="sm">Process a song first — every chord in it<br>gets a full chart here ★</div></div>';
+    return;
+  }
+  const seen=new Map();   // shape symbol → {sounding, firstIdx}
+  st.cells.forEach((c,i)=>{
+    if(c.sym==='N.C.') return;
+    const k=shapeSym(c.sym);
+    if(!seen.has(k)) seen.set(k,{sounding:shownSym(c.sym),firstIdx:i});
+  });
+  if(!seen.size){ box.innerHTML='<div class="lyr-none">NO CHORDS IN THIS CHART.</div>'; return; }
+  let h='';
+  seen.forEach((v,k)=>{
+    let svg,sub=[];
+    if(st.inst==='pno'){
+      svg=pianoSVG(v.sounding,150,84);
+      const c=chordPcs(v.sounding);
+      if(c) sub.push(c.pcs.map(p=>NOTES[p]).join(' · '));
+    }else{
+      const shp=st.inst==='gtr'?guitarShape(k):st.inst==='uke'?ukeShape(k):mandoShape(k);
+      svg=shp?fretDiagramSVG(shp,st.inst==='gtr'?6:4,st.inst==='gtr'?140:112,150,false)
+             :'<div class="lyr-none" style="padding:24px 0">NO SHAPE</div>';
+      if(st.capo>0) sub.push('SHAPE '+k+' @ CAPO '+st.capo);
+      if(shp&&shp.approx) sub.push('NEAREST SHAPE');
+    }
+    h+='<div class="dg-card" data-i="'+v.firstIdx+'" data-k="'+esc(k)+'" role="button" tabindex="0" '+
+       'title="Tap to jump to the first '+esc(v.sounding)+'">'+
+       '<div class="dg-name">'+esc(v.sounding)+'</div>'+svg+
+       (sub.length?'<div class="dg-sub">'+esc(sub.join(' · '))+'</div>':'')+'</div>';
+  });
+  box.innerHTML=h;
+  box.querySelectorAll('.dg-card').forEach(el=>{
+    const go=()=>{ const c=st.cells[+el.dataset.i]; if(c) seek(c.start); };
+    el.addEventListener('click',go);
+    el.addEventListener('keydown',e=>{ if(e.key==='Enter') go(); });
+  });
+}
 function cellAt(pos){
   const c=st.cells;
   for(let i=c.length-1;i>=0;i--) if(pos>=c[i].start-1e-6) return i;
@@ -1713,6 +1909,7 @@ function refreshNow(force){
   if(st.playing&&p>=totalUnits()&&st.mode==='synth'){ stop(); return; }
   $('timeLcd').textContent=fmtTime(displaySec());
   updateRefine(p);
+  updatePlaybar(p);
   if(st.song){
     const bs=st.song.beatSec;
     $('bpmLcd').textContent=
@@ -1734,6 +1931,21 @@ function refreshNow(force){
       if($('autoScroll').checked){
         const gr=grid.getBoundingClientRect(), er=el.getBoundingClientRect();
         grid.scrollTo({top:grid.scrollTop+(er.top-gr.top)-grid.clientHeight/2+30,behavior:'smooth'});
+      }
+    }
+    // the playbar block and the diagram card follow the same beat
+    pbInner.querySelectorAll('.pb-block.active').forEach(e=>e.classList.remove('active'));
+    const pbEl=pbInner.querySelector('.pb-block[data-i="'+idx+'"]');
+    if(pbEl) pbEl.classList.add('active');
+    const dl=$('diagList');
+    dl.querySelectorAll('.dg-card.active').forEach(e=>e.classList.remove('active'));
+    const cCell=idx>=0?st.cells[idx]:null;
+    if(cCell&&cCell.sym!=='N.C.'){
+      const card=dl.querySelector('.dg-card[data-k="'+shapeSym(cCell.sym)+'"]');
+      if(card){
+        card.classList.add('active');
+        if($('autoScroll').checked&&$('diagramsPane').classList.contains('on'))
+          card.scrollIntoView({block:'nearest'});
       }
     }
     updateInspector(idx);
@@ -2608,10 +2820,28 @@ function setCapo(v){
 }
 $('simplifySw').addEventListener('change',e=>{
   st.simplify=e.target.checked;
+  try{localStorage.setItem('cfy_simplify',st.simplify?'1':'0');}catch(e2){}
   reRender();
   setStatus(st.simplify?'SIMPLIFY ON — BASIC MAJOR / MINOR CHORDS.':'SIMPLIFY OFF — ORIGINAL CHORDS.');
 });
 $('miniDiagSw').addEventListener('change',e=>{ st.showMini=e.target.checked; reRender(); });
+/* ---- crt view tabs: chords / diagrams / lyrics ---- */
+function setView(v){
+  st.view=v;
+  try{localStorage.setItem('cfy_view',v);}catch(e){}
+  document.querySelectorAll('#crtTabs .crt-tab').forEach(b=>{
+    const on=b.dataset.view===v;
+    b.classList.toggle('lit',on);
+    b.setAttribute('aria-pressed',on?'true':'false');
+  });
+  $('chordsPane').classList.toggle('on',v==='chords');
+  $('diagramsPane').classList.toggle('on',v==='diagrams');
+  $('lyricsPane').classList.toggle('on',v==='lyrics');
+  lastActive=-2; lastTrIdx=-2;   // re-center whichever pane just appeared
+  refreshNow(true);
+}
+document.querySelectorAll('#crtTabs .crt-tab').forEach(b=>
+  b.addEventListener('click',()=>setView(b.dataset.view)));
 $('transUp').addEventListener('click',()=>setTranspose(st.transpose+1));
 $('transDown').addEventListener('click',()=>setTranspose(st.transpose-1));
 $('capoUp').addEventListener('click',()=>setCapo(st.capo+1));
@@ -2784,6 +3014,21 @@ function paintThemeBtn(){
   $('stPhosBtn').textContent=green?'Green':'Amber';
   $('stPhosBtn').title='Switch to the '+(green?'amber':'green')+' phosphor tube';
 }
+$('stBuild').textContent=$('buildTag').textContent;
+$('stUpdateBtn').addEventListener('click',async()=>{
+  $('stUpdateBtn').textContent='⟳ Updating…'; $('stUpdateBtn').disabled=true;
+  try{
+    if('serviceWorker' in navigator){
+      const regs=await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r=>r.unregister().catch(()=>{})));
+    }
+    if(window.caches){
+      const ks=await caches.keys();
+      await Promise.all(ks.map(k=>caches.delete(k)));
+    }
+  }catch(e){}
+  location.reload();
+});
 $('stPhosBtn').addEventListener('click',()=>{
   const next=currentPhosphor()==='green'?'amber':'green';
   document.documentElement.setAttribute('data-phosphor',next);
@@ -4220,14 +4465,53 @@ async function loadTranscript(vid){
   renderLyrics();
 }
 
-/* ── transcript in the Chords+Lyrics view ── */
+/* ── transcript in the lyrics view — the chart's chords ride above the words ── */
+function chordEventsForLyrics(align){
+  // cell starts → the transcript's time space. beats↦seconds via bpm; track-aligned
+  // lyrics already had the video offset removed, video-aligned ones still carry it.
+  if(!st.song||!st.cells.length) return [];
+  const unit=st.mode==='audio'?1:60/songBpm();
+  const off=(st.mode==='yt'&&align!=='track')?yt.offset:0;
+  const ev=[];
+  st.cells.forEach(c=>{ if(c.sym!=='N.C.') ev.push({t:off+c.start*unit,sym:shownSym(c.sym)}); });
+  return ev;
+}
+function lineWithChords(text,chords,t0,t1){
+  // no word-level stamps exist — spread the line's chords over its words by time
+  const words=text.split(/\s+/).filter(Boolean);
+  if(!words.length||!chords.length) return null;
+  const span=Math.max(0.001,t1-t0);
+  const at=words.map(()=>null);
+  chords.forEach(c=>{
+    let wi=Math.max(0,Math.min(words.length-1,Math.floor((c.t-t0)/span*words.length)));
+    while(wi<words.length&&at[wi]) wi++;          // stack rightward on collision
+    if(wi<words.length) at[wi]=c.sym;
+  });
+  let h='';
+  words.forEach((w,i)=>{
+    h+='<span class="lw"><i>'+(at[i]?esc(at[i]):'')+'</i><b>'+esc(w)+' </b></span>';
+  });
+  return h;
+}
 function renderTranscript(box,tr){
   const src=tr.edited?'EDITED':(tr.srcName||'YOUTUBE CAPTIONS')+(tr.auto?' · AUTO':'');
   const stamped=tr.synced!==false;
+  const ev=stamped?chordEventsForLyrics(tr.align):[];
   let h='<div class="lyr-sec">■ LYRICS — '+esc(src)+(stamped?' — TAP A LINE TO JUMP THE VIDEO':'')+'</div>';
+  // chords that land before the first sung line are the intro — show them anyway
+  if(ev.length&&tr.lines.length&&stamped&&ev[0].t<tr.lines[0].t){
+    const intro=ev.filter(e=>e.t<tr.lines[0].t).map(e=>e.sym)
+      .filter((s,i,a)=>i===0||s!==a[i-1]);        // collapse repeats
+    h+='<div class="lyr-line tr-intro"><span class="lw"><i>'+
+       intro.slice(0,12).map(esc).join('&nbsp;&nbsp;')+'</i><b>(INTRO)</b></span></div>';
+  }
   tr.lines.forEach((l,i)=>{
+    const t1=i+1<tr.lines.length?tr.lines[i+1].t:l.t+8;
+    const inWin=stamped?ev.filter(e=>e.t>=l.t&&e.t<t1):[];
+    const chorded=inWin.length?lineWithChords(l.text,inWin,l.t,t1):null;
     h+='<div class="lyr-line tr-line" data-t="'+l.t+'" data-li="'+i+'">'+
-      (stamped?'<span class="tr-t">'+fmtTime(l.t)+'</span>':'')+esc(l.text)+'</div>';
+      (stamped?'<span class="tr-t">'+fmtTime(l.t)+'</span>':'')+
+      (chorded||esc(l.text))+'</div>';
   });
   box.innerHTML=h;
   lastTrIdx=-2;
@@ -4339,6 +4623,8 @@ $('lyrFetchBtn').addEventListener('click',()=>refetchLyrics($('lyrFetchBtn')));
 window.CFY={st,yt};   // inspection handle
 try{ const ph=localStorage.getItem('cfy_phosphor'); if(ph==='amber') document.documentElement.setAttribute('data-phosphor','amber'); }catch(e){}
 paintThemeBtn();
+$('simplifySw').checked=st.simplify;   // markup default is OFF; a saved opt-in re-lights it
+setView(st.view);
 renderGrid();
 renderLyrics();
 renderLibrary();

@@ -34,9 +34,13 @@ const ui = await page.evaluate(() => {
         && before(it, el('ytSyncBtn')) && getComputedStyle(it).display !== 'none';
     })(),
     onlyOneInstTabs: document.querySelectorAll('.inst-tabs').length === 1,
-    lyricsDisplay: getComputedStyle(document.getElementById('lyrics')).display,
-    gridDisplay: getComputedStyle(document.getElementById('grid')).display,
-    viewTabsGone: !document.getElementById('viewTabs') && !document.getElementById('viewPerf'),
+    crtTabs: [...document.querySelectorAll('#crtTabs .crt-tab')].map(b => b.dataset.view),
+    chordsPaneOn: document.getElementById('chordsPane').classList.contains('on'),
+    othersPaneOff: !document.getElementById('diagramsPane').classList.contains('on')
+      && !document.getElementById('lyricsPane').classList.contains('on'),
+    playbarExists: !!document.getElementById('playbar') && !!document.getElementById('pbHead'),
+    transportSticky: getComputedStyle(document.getElementById('transport')).position === 'sticky',
+    simplifyDefaultOff: !document.getElementById('simplifySw').checked && st.simplify === false,
   };
 });
 ui.tag.includes('Colton.ink') && ui.title.includes('Colton.ink') && !ui.tag.includes('RobCo')
@@ -50,7 +54,17 @@ ui.togglesInTransport ? ok('simplify/mini-diagram toggles live in the control bo
 ui.instTabsPlacement && ui.onlyOneInstTabs
   ? ok('instrument tabs sit above ⚙ Process Song and stay visible before a video is attached')
   : bad('inst-tabs placement: ' + JSON.stringify(ui));
-ui.viewTabsGone ? ok('grid/lyrics/perf tabs removed') : bad('leftover view tabs found');
+JSON.stringify(ui.crtTabs) === JSON.stringify(['chords', 'diagrams', 'lyrics'])
+  ? ok('chordify-style view tabs present: Chords / Diagrams / Lyrics')
+  : bad('crt tabs: ' + JSON.stringify(ui.crtTabs));
+ui.chordsPaneOn && ui.othersPaneOff
+  ? ok('Chords is the default view; Diagrams and Lyrics panes start hidden')
+  : bad('default pane state: ' + JSON.stringify({ on: ui.chordsPaneOn, off: ui.othersPaneOff }));
+ui.playbarExists ? ok('chord-timeline playbar with fixed playhead present') : bad('#playbar/#pbHead missing');
+ui.transportSticky ? ok('transport control board is sticky (always-reachable play/pause)')
+  : bad('transport not sticky');
+ui.simplifyDefaultOff ? ok('SIMPLIFY CHORDS defaults OFF (exact chords shown)')
+  : bad('simplify should default off');
 
 // --- stem mixer: present, hidden until stems load, and it mutes the video ------
 const mix = await page.evaluate(() => {
@@ -110,9 +124,22 @@ mlChart.syms.join(' ') === 'Bbm N.C. Ab Db'
 mlChart.key === 'Bbm' && mlChart.artist.includes('ML CHART') && mlChart.added === 1
   ? ok('ML chart keeps the server\'s key and is labelled in the library')
   : bad('ML chart metadata: ' + JSON.stringify(mlChart));
-ui.lyricsDisplay !== 'none' && ui.gridDisplay !== 'none'
-  ? ok('lyrics and chords panes are both visible at once (split screen)')
-  : bad('split view not simultaneous: ' + JSON.stringify({ lyrics: ui.lyricsDisplay, grid: ui.gridDisplay }));
+// --- view tabs switch one pane at a time and persist the choice ---------------
+const tabSwitch = await page.evaluate(() => {
+  const on = id => document.getElementById(id).classList.contains('on');
+  document.querySelector('#crtTabs .crt-tab[data-view="lyrics"]').click();
+  const lyr = { lyrics: on('lyricsPane'), chords: on('chordsPane'), saved: localStorage.getItem('cfy_view') };
+  document.querySelector('#crtTabs .crt-tab[data-view="diagrams"]').click();
+  const dia = { diagrams: on('diagramsPane'), lyrics: on('lyricsPane') };
+  document.querySelector('#crtTabs .crt-tab[data-view="chords"]').click();
+  return { lyr, dia, back: on('chordsPane') };
+});
+tabSwitch.lyr.lyrics && !tabSwitch.lyr.chords && tabSwitch.lyr.saved === 'lyrics'
+  ? ok('lyrics tab swaps the pane in (one view at a time) and persists the choice')
+  : bad('tab switch → lyrics: ' + JSON.stringify(tabSwitch));
+tabSwitch.dia.diagrams && !tabSwitch.dia.lyrics && tabSwitch.back
+  ? ok('diagrams tab swaps in; chords tab restores the grid')
+  : bad('tab switch → diagrams/back: ' + JSON.stringify(tabSwitch));
 
 await page.click('#songsBtn');
 await page.waitForFunction(() => document.getElementById('library').getBoundingClientRect().x > -10, { timeout: 3000 });
@@ -163,6 +190,34 @@ const gtrLines = await page.evaluate(() => {
   const svg = document.querySelector('#grid .cell svg');
   return svg ? svg.querySelectorAll('line').length : -1;
 });
+
+// --- playbar + diagrams view are built from the loaded song ------------------
+const pbDiag = await page.evaluate(() => {
+  const blocks = document.querySelectorAll('#pbInner .pb-block').length;
+  const t0 = document.getElementById('pbInner').style.transform;
+  seek(8);                                    // two bars in — the ribbon must slide
+  const t1 = document.getElementById('pbInner').style.transform;
+  seek(0);
+  return {
+    visible: document.getElementById('playbar').style.display !== 'none',
+    blocks, cells: st.cells.length, moved: t0 !== t1,
+    cards: [...document.querySelectorAll('#diagList .dg-card')].map(c => c.dataset.k),
+    fingerNums: [...document.querySelectorAll('#diagList .dg-card svg text')]
+      .filter(t => /^[1-4]$/.test(t.textContent)).length,
+  };
+});
+pbDiag.visible && pbDiag.blocks === pbDiag.cells
+  ? ok(`playbar renders one chord block per cell (${pbDiag.blocks})`)
+  : bad('playbar blocks: ' + JSON.stringify(pbDiag));
+pbDiag.moved ? ok('playbar ribbon slides under the fixed playhead on seek')
+  : bad('playbar transform did not change on seek');
+JSON.stringify(pbDiag.cards) === JSON.stringify(['Am', 'F', 'C', 'G'])
+  ? ok('diagrams view: one card per distinct chord, in order of appearance')
+  : bad('diagram cards: ' + JSON.stringify(pbDiag.cards));
+pbDiag.fingerNums > 0
+  ? ok(`diagram dots carry finger numbers (${pbDiag.fingerNums} digits across the cards)`)
+  : bad('no finger numbers rendered in diagram cards');
+
 await page.click('.inst-tabs .btn[data-inst="uke"]');
 await page.waitForTimeout(200);
 const ukeLinesLive = await page.evaluate(() => {
@@ -250,6 +305,15 @@ await page.evaluate(() => { CFY.yt.videoId = 'dQw4w9WgXcQ'; renderLyrics(); });
 const trLines = await page.locator('#lyrics .tr-line').count();
 trLines > 10 ? ok(`lyrics pane renders ${trLines} transcript lines`) : bad('transcript lines in lyrics pane: ' + trLines);
 
+// with a chart loaded, the lyrics view carries its chords (intro row / above words)
+const lyrChords = await page.evaluate(() => ({
+  intro: !!document.querySelector('#lyrics .tr-intro'),
+  chordSpans: [...document.querySelectorAll('#lyrics .lw i')].filter(i => i.textContent.trim()).length,
+}));
+lyrChords.intro || lyrChords.chordSpans > 0
+  ? ok('lyrics view merges the chart\'s chords in (intro row and/or above-word symbols)')
+  : bad('no chords merged into lyrics: ' + JSON.stringify(lyrChords));
+
 // --- live-sync current-line highlight, driven by updateLive() ---------------
 const curTest = await page.evaluate(() => {
   const tr = trGet('dQw4w9WgXcQ');
@@ -263,6 +327,7 @@ curTest.err ? bad('cur-line test setup: ' + curTest.err)
   : curTest.curIdx === '2' ? ok('current-line highlight (.cur) tracks playback position')
                            : bad('cur line index: ' + curTest.curIdx);
 
+await page.evaluate(() => setView('lyrics'));   // the ✎ button lives in the lyrics view
 await page.click('#lyrEditBtn');
 await page.waitForSelector('#lyrEdit', { state: 'visible' });
 const txt = await page.inputValue('#lyrTxt');
@@ -275,6 +340,7 @@ after.edited && after.lines.length === 2 && after.lines[0].text === 'edited firs
   ? ok('editor save round-trips (edited flag, 2 lines)') : bad('after save: ' + JSON.stringify(after));
 const shown = await page.locator('#lyrics .tr-line').count();
 shown === 2 ? ok('lyrics pane re-rendered with edited lines') : bad('lyrics after edit: ' + shown + ' lines');
+await page.evaluate(() => setView('chords'));   // back to the default view
 
 // --- visible "Fetch Lyrics" button next to the YouTube panel -----------------
 const ytLyrResult = await page.evaluate(async () => {

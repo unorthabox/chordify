@@ -27,26 +27,24 @@ writeFileSync(SITE + '/index.html', html.replace('<title>Chordify — Colton.ink
                                                  '<title>CHORDIFY V2</title>'));
 ok('index.html updated on the "server"');
 
-// Launch #2: stale-while-revalidate should serve the OLD copy, and fetch the new
-// one in the background.
+// Launch #2: navigations are network-first now — ONE relaunch must show the new
+// version. (The old stale-while-revalidate needed an open-close-open dance.)
 const p2 = await ctx.newPage();
 await p2.goto(BASE, { waitUntil: 'load' });
 await p2.waitForSelector('#app');
 const t1 = await p2.title();
-t1 === t0 ? ok('launch 2 serves cached copy (expected — that is what makes it instant/offline)')
-          : ok('launch 2 already shows new copy: ' + JSON.stringify(t1));
+t1 === 'CHORDIFY V2'
+  ? ok('launch 2 serves the UPDATED copy — one relaunch, no open-twice dance')
+  : bad(`launch 2 still stale: ${JSON.stringify(t1)} — network-first navigation is broken`);
 
-// Give the background revalidation a moment to land in the cache.
-await p2.waitForTimeout(1500);
-
-// Launch #3: the refreshed copy must now be what's served.
+// And the fresh copy must have landed in the cache for offline use.
 const p3 = await ctx.newPage();
 await p3.goto(BASE, { waitUntil: 'load' });
 await p3.waitForSelector('#app');
 const t2 = await p3.title();
 t2 === 'CHORDIFY V2'
-  ? ok('launch 3 serves the UPDATED copy — updates do propagate without a VERSION bump')
-  : bad(`launch 3 still stale: ${JSON.stringify(t2)} — users would be stuck on the old app`);
+  ? ok('launch 3 still serves the updated copy')
+  : bad(`launch 3 regressed: ${JSON.stringify(t2)}`);
 
 // And the updated copy must still work offline.
 await ctx.setOffline(true);

@@ -38,6 +38,33 @@ self.addEventListener('fetch', e => {
   // audio to every other song, and /health//job polls must never be stale.
   if (/^\/(health$|grab$|analyze$|job\/|song\/)/.test(url.pathname)) return;
 
+  // Navigations are network-FIRST: opening the app always shows the latest
+  // deployed code in one launch (no more open-close-open dance). The cache is
+  // purely the offline/unreachable fallback, refreshed on every successful load.
+  if (req.mode === 'navigate') {
+    e.respondWith((async () => {
+      const cache = await caches.open(CACHE);
+      try {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 3000);   // don't hang a dead link
+        const res = await fetch(req, {signal: ctl.signal});
+        clearTimeout(timer);
+        if (res && res.ok) {
+          cache.put(req, res.clone());
+          return res;
+        }
+        throw new Error('bad response');
+      } catch (_) {
+        return (await cache.match(req, {ignoreSearch: true}))
+            || (await cache.match('./index.html'))
+            || Response.error();
+      }
+    })());
+    return;
+  }
+
+  // Everything else (icons, manifest) stays stale-while-revalidate — instant,
+  // and these barely ever change.
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const hit = await cache.match(req, {ignoreSearch: true});
@@ -54,11 +81,6 @@ self.addEventListener('fetch', e => {
 
     const res = await fresh;
     if (res) return res;
-
-    if (req.mode === 'navigate') {
-      const shell = await cache.match('./index.html');
-      if (shell) return shell;
-    }
     return Response.error();
   })());
 });
