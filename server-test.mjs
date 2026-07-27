@@ -37,6 +37,18 @@ if (!existsSync('server/.venv')) { console.log('  \x1b[33mSKIP\x1b[0m  server/.v
 const vid = fixture.match(/cfy-([\w-]{11})\.m4a/)?.[1] ?? VID;
 
 // --- boot the server on a throwaway data dir -----------------------------------
+/* Refuse a port we don't own. run-tests.mjs makes this check for the static
+ * suites, but this one sets noServe and boots its own server, so it has to make
+ * the check itself — and it learned the hard way: an orphaned server from an
+ * earlier run answered every probe below while running STALE code against an
+ * already-analyzed data dir, so the suite "failed" on a build that was fine. */
+try {
+  await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(1500) });
+  console.log(`  \x1b[31mFAIL\x1b[0m  :${PORT} is already in use — this suite would test THAT ` +
+              `server instead of the code you just wrote. Kill whatever owns the port first.`);
+  process.exit(1);
+} catch { /* nothing listening — good */ }
+
 const data = await mkdtemp(join(tmpdir(), 'chordify-server-'));
 await cp(join('fixtures', fixture), join(data, vid, 'source.m4a'));
 
@@ -49,7 +61,16 @@ let srvLog = '';
 srv.stdout.on('data', d => srvLog += d);
 srv.stderr.on('data', d => srvLog += d);
 
+/* `uv run uvicorn` runs python as a GRANDCHILD: killing the child leaves that
+ * python alive and still listening, which is how the orphan described above got
+ * created in the first place. Take out the whole tree. */
+const killTree = (pid) => new Promise(res => {
+  if (process.platform === 'win32') execFile('taskkill', ['/F', '/T', '/PID', String(pid)], () => res());
+  else { try { process.kill(pid, 'SIGKILL'); } catch {} res(); }
+});
+
 async function cleanup() {
+  if (srv.pid) await killTree(srv.pid);
   srv.kill();
   await new Promise(r => setTimeout(r, 500));
   await rm(data, { recursive: true, force: true }).catch(() => {});
@@ -81,6 +102,9 @@ const shellHtml = shell.ok ? await shell.text() : '';
 shell.ok && shellHtml.includes('GRAB_DEFAULTS')
   ? ok('/ serves the app shell (index.html)')
   : bad(`/ → ${shell.status}, expected index.html`);
+shellHtml.includes(`window.CFY_KEY=${JSON.stringify(KEY)};`)
+  ? ok('/ injects the API key into the shell (stems work with zero setup)')
+  : bad('served shell did not get the injected CFY_KEY');
 const swRes = await fetch(`${BASE}/sw.js`);
 swRes.ok && (swRes.headers.get('content-type') || '').includes('javascript')
   ? ok('/sw.js served as javascript (service worker can register)')

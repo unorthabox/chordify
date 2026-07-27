@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import re
 import secrets
@@ -27,7 +28,7 @@ from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from . import db
 from .jobs import JobManager
@@ -174,8 +175,16 @@ _NO_CACHE = {"Cache-Control": "no-cache"}  # the service worker does its own cac
 
 @app.get("/")
 async def shell_index():
-    return FileResponse(SITE / "index.html",
-                        media_type=SHELL_FILES["index.html"], headers=_NO_CACHE)
+    """Serve the app with the API key injected.
+
+    Reaching this endpoint already means reaching a tailnet-only server — the
+    same bar as /grab, which is keyless — so handing the page its key here adds
+    no exposure, and saves every device from typing one.
+    """
+    html = (SITE / "index.html").read_text(encoding="utf-8")
+    html = html.replace("window.CFY_KEY=null;/*CFY_KEY*/",
+                        f'window.CFY_KEY={json.dumps(KEY)};/*CFY_KEY*/', 1)
+    return HTMLResponse(html, headers=_NO_CACHE)
 
 
 @app.get("/{name}")

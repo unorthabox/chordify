@@ -39,6 +39,13 @@
 #library.open{transform:translateX(0);visibility:visible}
 #library #songlist{max-height:none}
 @media (prefers-reduced-motion:reduce){ #library{transition:none} }
+/* ── Stem mixer: one module, two faces (synth band / real stems) ── */
+#mixMod .stemmix{display:none}
+#mixMod.stems .stemmix{display:block}
+#mixMod.stems .synthmix{display:none}
+#stemOffBtn{display:none}
+#mixMod.stems #stemOffBtn{display:inline-block}
+
 /* ── Settings modal — same sibling-scrim shape as #toolkit ── */
 #settings{position:fixed;inset:0;z-index:80;display:none;place-items:center;padding:18px}
 #settings.open{display:grid}
@@ -944,10 +951,23 @@
           </div>
           <div class="module" id="mixMod">
             <h4><span class="star">★</span> Mixer</h4>
-            <div class="fader-row"><label>Chord</label><input type="range" id="volChord" min="0" max="100" value="80"><output id="volChordOut">80</output></div>
-            <div class="fader-row"><label>Bass</label><input type="range" id="volBass" min="0" max="100" value="75"><output id="volBassOut">75</output></div>
-            <div class="fader-row"><label>Drums</label><input type="range" id="volDrum" min="0" max="100" value="65"><output id="volDrumOut">65</output></div>
-            <div class="hint" id="mixHint">SYNTH BAND LEVELS.</div>
+            <div class="synthmix">
+              <div class="fader-row"><label>Chord</label><input type="range" id="volChord" min="0" max="100" value="80"><output id="volChordOut">80</output></div>
+              <div class="fader-row"><label>Bass</label><input type="range" id="volBass" min="0" max="100" value="75"><output id="volBassOut">75</output></div>
+              <div class="fader-row"><label>Drums</label><input type="range" id="volDrum" min="0" max="100" value="65"><output id="volDrumOut">65</output></div>
+              <div class="hint" id="mixHint">SYNTH BAND LEVELS.</div>
+            </div>
+            <div class="stemmix">
+              <div class="fader-row"><label>Vocals</label><input type="range" id="s_vocals" min="0" max="100" value="100" aria-label="Vocals level"><output id="s_vocals_out">100</output></div>
+              <div class="fader-row"><label>Drums</label><input type="range" id="s_drums" min="0" max="100" value="100" aria-label="Drums level"><output id="s_drums_out">100</output></div>
+              <div class="fader-row"><label>Bass</label><input type="range" id="s_bass" min="0" max="100" value="100" aria-label="Bass level"><output id="s_bass_out">100</output></div>
+              <div class="fader-row"><label>Other</label><input type="range" id="s_other" min="0" max="100" value="100" aria-label="Other instruments level"><output id="s_other_out">100</output></div>
+              <div class="hint">REAL SEPARATED TRACKS — PULL VOCALS DOWN TO SING, OTHER DOWN TO PLAY THE PART YOURSELF.</div>
+            </div>
+            <div class="export-row">
+              <button class="btn" id="stemBtn">🎚 Load Stems</button>
+              <button class="btn" id="stemOffBtn">↩ Video Audio</button>
+            </div>
           </div>
           <div class="module">
             <h4><span class="star">★</span> Export</h4>
@@ -1577,6 +1597,7 @@ function play(withCountIn){
     if(!yt.player||!yt.player.playVideo) return;
     yt.player.playVideo();
     st.playing=true;
+    stemsSync(true);            // stems ride the video, so they start with it
     $('playBtn').textContent='❚❚ HOLD';
     $('sigLed').className='led on-amber blink';
     setStatus('► PLAY-ALONG — '+(st.song?st.song.title:(yt.title||yt.videoId||'')).toUpperCase());
@@ -1628,6 +1649,7 @@ function pause(){
   st.playing=false;
   if(st.mode==='yt'){
     if(yt.player&&yt.player.pauseVideo) yt.player.pauseVideo();
+    stemsStop();
     $('playBtn').textContent='▶ PLAY';
     $('sigLed').className='led';
     setStatus('❚❚ HOLD — '+fmtTime(displaySec()));
@@ -1651,6 +1673,7 @@ function seek(u){
   if(st.mode==='yt'){
     st.pos=Math.max(0,Math.min(u,totalUnits()));
     if(yt.player&&yt.player.seekTo) yt.player.seekTo(yt.offset+st.pos*60/songBpm(),true);
+    stemsSync(true);            // scrubbing must re-anchor the stems, not drift
     refreshNow(true);
     return;
   }
@@ -3223,6 +3246,7 @@ async function ytAttach(videoId,title,by){
   }
   const hadSong=!!st.song;   // no bundled song bank — a video alone is enough to attach
   grabPanelOpen(false);      // a different video means any pending grab is stale
+  if(videoId!==stemState.vid) stemsForget();  // loaded stems belong to the old song
   pause();
   msg.textContent='> LOADING PLAYER…';
   try{ await loadYtApi(); }
@@ -3550,6 +3574,195 @@ async function chartCurrentVideoFromBytes(ab,onProgress){
   setStatus('AUTO-CHARTED — '+nSeg+' CHORDS · '+(lockedTempo?Math.round(bpm)+' BPM':'TEMPO ESTIMATED')+' · KEY '+res.key+'. DRAG OFFSET/BPM TO FINE-TUNE.');
   return song;
 }
+/* ================================================================
+   STEMS — the server separates, the phone mixes
+   The analysis server returns four AAC stems per video. We cache the
+   bytes in OPFS (an installed PWA gets a multi-GB quota and is exempt
+   from the 7-day eviction, so a song separated once stays separated),
+   decode them once, and play them through per-stem GainNodes.
+   The iframe stays the clock and the picture but goes MUTE: the stems
+   sum back to the original recording, so leaving the video audible
+   would play everything twice and make the faders do nothing.
+================================================================ */
+/* The analysis server rewrites the next line in the copy of this file it serves;
+   from GitHub Pages it stays null and the app falls back to a remembered key. */
+window.CFY_KEY=null;/*CFY_KEY*/
+const STEMS=['vocals','drums','bass','other'];
+const stemState={vid:null,buffers:null,srcs:[],on:false,t0:0,v0:0,rate:1,loading:false,timer:null};
+let stemGains=null;
+
+/* The v2 endpoints need the server's key. The server injects it into the copy
+   of index.html it serves, so reaching the app at all is what grants it — the
+   same bar as /grab, which is keyless. Persisted so an offline launch (and the
+   GitHub Pages copy, once it has seen the server) keeps working. */
+function cfyKey(){
+  if(window.CFY_KEY){ try{localStorage.setItem('cfy_key',window.CFY_KEY);}catch(e){} return window.CFY_KEY; }
+  try{ return localStorage.getItem('cfy_key'); }catch(e){ return null; }
+}
+function stemHeaders(){ const k=cfyKey(); return k?{'X-Chordify-Key':k}:{}; }
+
+async function opfsDir(){
+  try{
+    if(!navigator.storage||!navigator.storage.getDirectory) return null;
+    const root=await navigator.storage.getDirectory();
+    return await root.getDirectoryHandle('stems',{create:true});
+  }catch(e){ return null; }
+}
+async function opfsGet(dir,name){
+  try{ return await (await (await dir.getFileHandle(name)).getFile()).arrayBuffer(); }
+  catch(e){ return null; }
+}
+async function opfsPut(dir,name,ab){
+  try{
+    const fh=await dir.getFileHandle(name,{create:true});
+    const w=await fh.createWritable(); await w.write(ab); await w.close();
+  }catch(e){}   // a full or unsupported OPFS costs us the cache, not the feature
+}
+
+function stemsEnsureGains(){
+  if(!ensureCtx()) return false;
+  if(!stemGains){
+    stemGains={};
+    STEMS.forEach(n=>{ const g=ctx.createGain(); g.connect(gMaster); stemGains[n]=g; });
+  }
+  return true;
+}
+function applyStemVols(){
+  if(!stemGains) return;
+  STEMS.forEach(n=>{
+    const el=$('s_'+n); if(!el) return;
+    const out=$('s_'+n+'_out'); if(out) out.value=el.value;
+    stemGains[n].gain.value=(+el.value)/100;
+  });
+}
+function stemsStop(){
+  stemState.srcs.forEach(s=>{ try{s.onended=null;s.stop();}catch(e){} });
+  stemState.srcs=[];
+}
+/* Start every stem from the same video timestamp. One shared `when` keeps the
+   four sources sample-locked to each other; drift against the iframe is what
+   stemsSync watches for. */
+function stemsStartAt(vsec){
+  stemsStop();
+  if(!stemState.on||!stemState.buffers||!stemGains) return;
+  const rate=(yt.player&&yt.player.getPlaybackRate)?(yt.player.getPlaybackRate()||1):1;
+  const when=ctx.currentTime+0.06, off=Math.max(0,vsec);
+  STEMS.forEach(n=>{
+    const b=stemState.buffers[n];
+    if(!b||off>=b.duration) return;
+    const s=ctx.createBufferSource();
+    s.buffer=b; s.playbackRate.value=rate;
+    s.connect(stemGains[n]); s.start(when,off);
+    stemState.srcs.push(s);
+  });
+  stemState.t0=when; stemState.v0=off; stemState.rate=rate;
+}
+function stemsExpected(){ return stemState.v0+(ctx.currentTime-stemState.t0)*(stemState.rate||1); }
+/* The iframe is the clock; Web Audio free-runs. Re-anchor whenever they part by
+   more than an ear can miss (~a 16th at 120bpm), which also covers scrubbing,
+   buffering stalls and varispeed changes without special-casing any of them. */
+function stemsSync(force){
+  if(!stemState.on||!stemState.buffers) return;
+  const p=yt.player;
+  if(!p||!p.getCurrentTime||!st.playing){ if(!st.playing) stemsStop(); return; }
+  const v=p.getCurrentTime();
+  const rate=(p.getPlaybackRate?p.getPlaybackRate():1)||1;
+  if(force||!stemState.srcs.length||rate!==stemState.rate||Math.abs(v-stemsExpected())>0.25)
+    stemsStartAt(v);
+}
+function stemsSetOn(on){
+  const want=!!on&&!!stemState.buffers;
+  stemState.on=want;
+  $('mixMod').classList.toggle('stems',want);
+  const p=yt.player;
+  try{ if(p&&p.mute){ if(want) p.mute(); else p.unMute(); } }catch(e){}
+  if(stemState.timer){ clearInterval(stemState.timer); stemState.timer=null; }
+  if(want){
+    applyStemVols();
+    stemState.timer=setInterval(()=>stemsSync(false),400);
+    stemsSync(true);
+    setStatus('🎚 STEMS LIVE — THE VIDEO IS MUTED, THE FADERS ARE THE BAND.');
+  }else{
+    stemsStop();
+    setStatus('↩ VIDEO AUDIO RESTORED.');
+  }
+}
+/* Fetch (or restore from OPFS) the four stems for the attached video. */
+async function stemsLoad(btn){
+  const vid=yt.videoId;
+  if(!vid){ setStatus('ATTACH A VIDEO FIRST — SEARCH, THEN TAP A RESULT.'); return; }
+  if(stemState.loading) return;
+  if(stemState.buffers&&stemState.vid===vid){ stemsSetOn(true); return; }
+  stemState.loading=true;
+  const label=btn?btn.textContent:'';
+  const say=m=>{ if(btn) btn.textContent=m; setStatus(m.toUpperCase()); };
+  try{
+    if(!stemsEnsureGains()) throw new Error('NO AUDIO CONTEXT');
+    if(ctx.state==='suspended') await ctx.resume();
+    const dir=await opfsDir();
+    const raw={}, missing=[];
+    for(const n of STEMS){
+      const ab=dir?await opfsGet(dir,vid+'.'+n+'.m4a'):null;
+      if(ab&&ab.byteLength) raw[n]=ab; else missing.push(n);
+    }
+    if(missing.length){
+      const base=await grabResolve();
+      if(!base) throw new Error('NO ANALYSIS SERVER — IS TAILSCALE ON?');
+      say('🎚 Separating…');
+      const r=await fetch(base+'/analyze',{
+        method:'POST',
+        headers:{'Content-Type':'application/json',...stemHeaders()},
+        body:JSON.stringify({v:vid})});
+      if(r.status===401) throw new Error('SERVER KEY MISSING — OPEN THE APP FROM THE SERVER’S OWN URL');
+      if(!r.ok) throw new Error('ANALYZE FAILED ('+r.status+')');
+      const started=await r.json();
+      if(started.job){
+        for(;;){
+          await new Promise(s=>setTimeout(s,2000));
+          const jr=await fetch(base+'/job/'+started.job,{headers:stemHeaders()});
+          if(!jr.ok) throw new Error('JOB LOST ('+jr.status+')');
+          const j=await jr.json();
+          if(j.status==='done') break;
+          if(j.status==='error') throw new Error('SEPARATION FAILED: '+(j.error||'UNKNOWN'));
+          say('🎚 '+String(j.status||'working').replace(/_/g,' ')+'…');
+        }
+      }
+      for(const n of missing){
+        say('🎚 Downloading '+n+'…');
+        const sr=await fetch(base+'/song/'+vid+'/stem/'+n+'.m4a',{headers:stemHeaders()});
+        if(!sr.ok) throw new Error('STEM '+n.toUpperCase()+' FAILED ('+sr.status+')');
+        raw[n]=await sr.arrayBuffer();
+        if(dir) await opfsPut(dir,vid+'.'+n+'.m4a',raw[n]);
+      }
+    }
+    say('🎚 Decoding…');
+    const decoded={};
+    for(const n of STEMS){
+      // decodeAudioData detaches its input, so hand it a copy — the original
+      // may still be on its way into OPFS.
+      decoded[n]=await ctx.decodeAudioData(raw[n].slice(0));
+    }
+    stemState.vid=vid; stemState.buffers=decoded;
+    stemsSetOn(true);
+  }catch(e){
+    setStatus((e&&e.message?e.message:'STEMS FAILED').toUpperCase());
+  }finally{
+    stemState.loading=false;
+    if(btn) btn.textContent=label||'🎚 Load Stems';
+  }
+}
+/* A different video means the loaded stems are the wrong song. */
+function stemsForget(){
+  if(stemState.on) stemsSetOn(false);
+  stemState.vid=null; stemState.buffers=null;
+}
+STEMS.forEach(n=>{
+  const el=$('s_'+n);
+  if(el) el.addEventListener('input',applyStemVols);
+});
+$('stemBtn').addEventListener('click',e=>stemsLoad(e.currentTarget));
+$('stemOffBtn').addEventListener('click',()=>stemsSetOn(false));
+
 /* iPadOS 13+ reports itself as a Mac, so the touch-points check is load-bearing. */
 function isIOS(){
   const ua=navigator.userAgent||'';

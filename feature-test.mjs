@@ -51,6 +51,37 @@ ui.instTabsPlacement && ui.onlyOneInstTabs
   ? ok('instrument tabs sit above ⚙ Process Song and stay visible before a video is attached')
   : bad('inst-tabs placement: ' + JSON.stringify(ui));
 ui.viewTabsGone ? ok('grid/lyrics/perf tabs removed') : bad('leftover view tabs found');
+
+// --- stem mixer: present, hidden until stems load, and it mutes the video ------
+const mix = await page.evaluate(() => {
+  const mod = document.getElementById('mixMod');
+  const faders = ['vocals', 'drums', 'bass', 'other'].map(n => !!document.getElementById('s_' + n));
+  const before = getComputedStyle(document.querySelector('#mixMod .stemmix')).display;
+  const synthBefore = getComputedStyle(document.querySelector('#mixMod .synthmix')).display;
+  let muted = false;
+  yt.player = { mute: () => { muted = true; }, unMute: () => { muted = false; },
+                getCurrentTime: () => 0, getPlaybackRate: () => 1 };
+  stemState.buffers = { vocals: 1, drums: 1, bass: 1, other: 1 };  // pretend they loaded
+  stemsSetOn(true);
+  const after = getComputedStyle(document.querySelector('#mixMod .stemmix')).display;
+  const synthAfter = getComputedStyle(document.querySelector('#mixMod .synthmix')).display;
+  const onClass = mod.classList.contains('stems');
+  const mutedWhileOn = muted;                    // sample before we turn them off
+  stemsSetOn(false);
+  const restored = !mod.classList.contains('stems');
+  const unmutedAfter = !muted;
+  stemState.buffers = null; yt.player = null;
+  if (stemState.timer) { clearInterval(stemState.timer); stemState.timer = null; }
+  return { faders, before, after, synthBefore, synthAfter, onClass,
+           mutedWhileOn, restored, unmutedAfter };
+});
+mix.faders.every(Boolean) && mix.before === 'none' && mix.after !== 'none'
+  && mix.synthBefore !== 'none' && mix.synthAfter === 'none' && mix.onClass
+  ? ok('stem mixer: four faders, hidden until stems load, then it replaces the synth faders')
+  : bad('stem mixer UI: ' + JSON.stringify(mix));
+mix.mutedWhileOn && mix.restored && mix.unmutedAfter
+  ? ok('turning stems on mutes the iframe (no double audio); turning them off restores it')
+  : bad('stem mute handling: ' + JSON.stringify(mix));
 ui.lyricsDisplay !== 'none' && ui.gridDisplay !== 'none'
   ? ok('lyrics and chords panes are both visible at once (split screen)')
   : bad('split view not simultaneous: ' + JSON.stringify({ lyrics: ui.lyricsDisplay, grid: ui.gridDisplay }));
