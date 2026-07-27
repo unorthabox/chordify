@@ -3,7 +3,29 @@
 FastAPI backend on **thing3** (this Windows PC). Supersedes `grab-server.mjs` on
 port 8934: same `/health` + `/grab?v=` contract the v1 client already speaks,
 plus the v2 pipeline — yt-dlp grab → GPU stem separation (`htdemucs_ft` via
-audio-separator) → AAC/m4a stems + `analysis.json`, cached forever per video id.
+audio-separator) → chords + beats → AAC/m4a stems + `analysis.json`, cached forever
+per video id.
+
+## The chord/beat stage
+
+`pipeline/chords.py` runs after separation (it needs the FLACs, which the transcode
+step then deletes) and before transcode:
+
+- **chords** — BTC-ISMIR19 large-vocabulary transformer (MIT, vendored under
+  `pipeline/btc/`) over an `other + bass` accompaniment mix. Vocals and drums gone
+  is most of why this beats the in-browser detector.
+- **beats** — beat-this (MIT) over the *full* mix, where the drums still are.
+- Weights (12MB) download on first use into the model dir and are gitignored, same
+  as the demucs weights.
+- Both models run in **one subprocess** (`btc_runner.py`) with `CUDA_VISIBLE_DEVICES`
+  pinned — same discipline as separation, because process exit is the only reliable
+  way to hand VRAM back to the LLMs sharing these cards.
+- If this stage throws, the job still completes: `analysis.json` gets a `chord_error`
+  and the stems are served anyway. Losing the chart must not lose the song.
+
+**Not madmom.** It would have given beats and chords from one dependency, but it needs
+a C compiler this machine doesn't have (no VS Build Tools) and pins `numpy<2`. That is
+also why beat-this runs with `dbn=False` — the DBN post-processor is madmom's.
 
 ## Endpoints
 
@@ -13,7 +35,7 @@ audio-separator) → AAC/m4a stems + `analysis.json`, cached forever per video i
 | `GET /grab?v=<id>` | none (v1 compat) | stream bestaudio m4a; serves the cached source when analyzed |
 | `POST /analyze {v}` | key | queue the pipeline → `{job, cached}` |
 | `GET /job/{id}` | key | `{status: queued\|grabbing\|separating\|transcoding\|done\|error, progress, gpu}` |
-| `GET /song/{v}/analysis.json` | key | stem list + metadata (chords/beats arrive in Phase 3) |
+| `GET /song/{v}/analysis.json` | key | stems, duration, **chords, beats, downbeats, bpm, key** |
 | `GET /song/{v}/stem/{name}.m4a` | key | vocals/drums/bass/other; supports Range |
 
 Auth = `X-Chordify-Key` header or `?k=`. The key is auto-generated into

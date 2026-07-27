@@ -14,3 +14,9 @@ audio-separator[gpu]==0.44.5
 fastapi
 uvicorn[standard]
 pynvml
+# Chords + beats. beat-this brings no new transitive deps (einops et al. arrive
+# with audio-separator); mir_eval is what BTC's vendored utils import.
+# NOT madmom: it needs a C compiler this machine does not have, which is also
+# why beat-this runs with dbn=False.
+beat-this
+mir_eval

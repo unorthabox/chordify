@@ -11,16 +11,16 @@ from pathlib import Path
 
 from . import db
 from .gpu import pick_gpu
-from .pipeline import grab, stems
+from .pipeline import chords, grab, stems
 
-ANALYSIS_VERSION = 1
+ANALYSIS_VERSION = 2   # 2 adds ML chords + beats
 
 
 @dataclass
 class Job:
     id: str
     video_id: str
-    state: str = "queued"  # queued|grabbing|separating|transcoding|done|error
+    state: str = "queued"  # queued|grabbing|separating|charting|transcoding|done|error
     progress: float = 0.0
     gpu_index: int | None = None
     error: str | None = None
@@ -54,9 +54,17 @@ class JobManager:
         return self.data / vid
 
     def is_done(self, vid: str) -> bool:
+        """Cached only if the results are current. A song analyzed by an older
+        version predates the chord/beat stage, and would otherwise be pinned to a
+        stem-only result forever — re-running is what upgrades it."""
         d = self.song_dir(vid)
-        return ((d / "analysis.json").exists()
-                and all((d / "stems" / f"{s}.m4a").exists() for s in stems.STEMS))
+        if not all((d / "stems" / f"{s}.m4a").exists() for s in stems.STEMS):
+            return False
+        try:
+            got = json.loads((d / "analysis.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            return False
+        return got.get("analysis_version", 0) >= ANALYSIS_VERSION
 
     def submit(self, vid: str) -> tuple[Job | None, bool]:
         """Returns (job, cached). cached=True means results already exist."""
@@ -106,16 +114,30 @@ class JobManager:
                 job.gpu_index = None
                 flacs = await stems.separate(source, d, model_dir, None)
 
-        job.state, job.progress = "transcoding", 0.75
+        duration = _duration_s(source)
+
+        # Chords read the accompaniment FLACs, so this must happen before the
+        # transcode step deletes them.
+        job.state, job.progress = "charting", 0.6
+        chart: dict = {}
+        try:
+            chart = await chords.analyze(source, flacs, d, model_dir,
+                                         job.gpu_index, duration)
+        except Exception as e:  # noqa: BLE001
+            # Separated stems are useful on their own, and the app still has its
+            # in-browser detector. Losing the chart must not lose the song.
+            chart = {"chord_error": str(e)[:300]}
+
+        job.state, job.progress = "transcoding", 0.8
         await stems.transcode(flacs, d / "stems")
 
-        duration = _duration_s(source)
         analysis = {
             "video_id": job.video_id,
             "analysis_version": ANALYSIS_VERSION,
             "stem_model": stems.STEM_MODEL,
             "stems": list(stems.STEMS),
             "duration_s": duration,
+            **chart,
         }
         (d / "analysis.json").write_text(json.dumps(analysis, indent=2))
         db.upsert_song(self.con, job.video_id, status="done", duration_s=duration,

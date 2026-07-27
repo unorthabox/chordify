@@ -7,3 +7,4 @@ server/data/
 server/logs/
 server/.env
 __pycache__/
+*.pt

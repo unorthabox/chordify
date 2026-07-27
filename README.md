@@ -14,9 +14,9 @@ tailnet** can skip Pages entirely: the analysis server serves the app itself at
 zero settings.
 
 No account. No API key. No build step. The one moving part is a home
-analysis server (see [`server/`](server/README.md)) that fetches audio — and soon
-separates stems and runs ML chord detection — reachable from every device over
-Tailscale HTTPS.
+analysis server (see [`server/`](server/README.md)) that fetches the audio, separates it
+into stems on the GPU, and runs ML chord and beat detection — reachable from every
+device over Tailscale HTTPS.
 
 ---
 
@@ -25,11 +25,35 @@ Tailscale HTTPS.
 One `index.html` — all the HTML, CSS and JavaScript inline — plus a service worker,
 a manifest and some icons. Zero runtime dependencies. Deploying is `git push`.
 
-The chord detection runs **in the browser**, on your phone: a hand-written FFT feeds
-a log-frequency spectrogram, harmonic peeling strips each note's overtones, and 84
-chord templates are matched against beat-synchronous chroma and decoded with Viterbi.
-It reads major, minor, 7th, m7, maj7, sus2 and sus4 chords, and finds the tempo, the
-key and the offset that syncs the chart to the video.
+## Where the chords come from
+
+Two detectors, and the app prefers the better one.
+
+**On the server (the good one).** The analysis pipeline separates the song, then reads
+chords off the *accompaniment* with [BTC-ISMIR19](https://github.com/jayg996/BTC-ISMIR19),
+a bi-directional chord transformer, and beats off the *full mix* with
+[beat-this](https://github.com/CPJKU/beat_this). Chord edges are snapped to the detected
+beats, repeats merged, and the key is estimated from how much chord time each of the 24
+keys explains — which is what makes a song in D♭ read `Ab / Db / Bbm` instead of
+`G# / C# / A#m`. On the fixture: 196 segments, 92% landing on beat multiples, key Bbm.
+
+**In the browser (the fallback).** A hand-written FFT feeds a log-frequency spectrogram,
+harmonic peeling strips each note's overtones, and 84 chord templates are matched against
+beat-synchronous chroma and decoded with Viterbi. It reads major, minor, 7th, m7, maj7,
+sus2 and sus4, and finds tempo, key and the offset that syncs the chart to the video.
+
+⚙ Process Song takes the server's chart when the server already has one, otherwise it
+charts locally *immediately* and swaps in the server's version when that job finishes.
+Off the tailnet you keep the local detector and lose nothing you had before.
+
+## Stems
+
+The same job returns four separated tracks (vocals, drums, bass, other). **🎚 Load Stems**
+pulls them, caches the bytes in OPFS — an installed PWA has the quota and is exempt from
+the 7-day eviction, so a song separated once stays separated — and plays them through
+per-stem faders. The video is muted while they play: the stems sum back to the original
+recording, so leaving it audible would double every part. Pull *vocals* down to sing it,
+*other* down to play the part yourself.
 
 ## Getting the audio
 
@@ -78,6 +102,7 @@ npm run test:ios         # opt-in: the phone path, in Safari's engine
 | `feature` | ~70 assertions over the real UI — needs network (it hits live Piped mirrors) |
 | `detect` | chord-detection **accuracy**, against synthesized songs with known chords |
 | `ios` | the whole phone flow, in **WebKit** — opt-in, see below |
+| `server` | the analysis backend end to end — real separation, real chords — opt-in |
 
 ### The iOS suite
 

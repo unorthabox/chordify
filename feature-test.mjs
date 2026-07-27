@@ -82,6 +82,34 @@ mix.faders.every(Boolean) && mix.before === 'none' && mix.after !== 'none'
 mix.mutedWhileOn && mix.restored && mix.unmutedAfter
   ? ok('turning stems on mutes the iframe (no double audio); turning them off restores it')
   : bad('stem mute handling: ' + JSON.stringify(mix));
+
+// --- server ML chart -> the app's song object ---------------------------------
+const mlChart = await page.evaluate(() => {
+  const before = st.imported.length;
+  // a gap between the first and second chord must become an N.C., or every bar
+  // after it plays early
+  const song = songFromAnalysis({
+    bpm: 120, key: 'Bbm',
+    chords: [['Bbm', 0, 2], ['Ab', 3, 1], ['Db', 4, 2]],
+  }, 'mlvid00test', 'Test ML', 'Chan');
+  const seq = song.sections[0][1];
+  const out = {
+    label: song.sections[0][0], artist: song.artist, key: song.key, bpm: song.bpm,
+    syms: seq.map(c => c[0]), durs: seq.map(c => c[1]),
+    added: st.imported.length - before,
+  };
+  st.imported = st.imported.filter(s => s.videoId !== 'mlvid00test');
+  saveImported();
+  return out;
+});
+// 120bpm -> 2 beats/sec: 2s=4 beats, the 1s gap=2 beats, 1s=2, 2s=4
+mlChart.syms.join(' ') === 'Bbm N.C. Ab Db'
+  && JSON.stringify(mlChart.durs) === JSON.stringify([4, 2, 2, 4])
+  ? ok('ML chart converts to beat-denominated cells and fills gaps with N.C.')
+  : bad('ML chart conversion: ' + JSON.stringify(mlChart));
+mlChart.key === 'Bbm' && mlChart.artist.includes('ML CHART') && mlChart.added === 1
+  ? ok('ML chart keeps the server\'s key and is labelled in the library')
+  : bad('ML chart metadata: ' + JSON.stringify(mlChart));
 ui.lyricsDisplay !== 'none' && ui.gridDisplay !== 'none'
   ? ok('lyrics and chords panes are both visible at once (split screen)')
   : bad('split view not simultaneous: ' + JSON.stringify({ lyrics: ui.lyricsDisplay, grid: ui.gridDisplay }));

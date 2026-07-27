@@ -147,6 +147,38 @@ analysis.video_id === vid && Array.isArray(analysis.stems) && analysis.stems.len
   ? ok(`analysis.json: ${analysis.stems.join('/')} via ${analysis.stem_model}, ${analysis.duration_s}s`)
   : bad('analysis.json shape: ' + JSON.stringify(analysis));
 
+// --- 4b. the ML chart: chords snapped to real beats, spelled to the key -------
+if (analysis.chord_error) {
+  bad('chord/beat stage failed: ' + analysis.chord_error);
+} else {
+  Array.isArray(analysis.chords) && analysis.chords.length > 10
+    ? ok(`${analysis.chords.length} chord segments via ${analysis.chord_model}`)
+    : bad('no chords in analysis.json: ' + JSON.stringify(analysis.chords));
+  analysis.bpm > 30 && analysis.bpm < 250 && analysis.beats?.length > 20
+    ? ok(`beats: ${analysis.beats.length} at ${analysis.bpm} bpm via ${analysis.beat_model}`)
+    : bad(`beats/bpm implausible: ${analysis.bpm}, ${analysis.beats?.length} beats`);
+  // Every chord symbol must be one the app can actually voice and draw, or the
+  // grid renders a chord with no shape and no notes.
+  const QUAL = ['', 'm', '7', 'm7', 'maj7', 'sus4', 'sus2', 'dim', 'dim7', 'aug',
+                '6', 'm6', 'add9', '9', 'm9', 'm7b5'];
+  const bogus = analysis.chords
+    .map(c => c[0])
+    .filter(s => s !== 'N.C.' && !(/^[A-G][#b]?(.*)$/.test(s) && QUAL.includes(RegExp.$1)));
+  bogus.length === 0
+    ? ok('every chord symbol is in the app\'s vocabulary')
+    : bad('unrenderable chord symbols: ' + [...new Set(bogus)].join(' '));
+  // Beat-snapping is the difference between a chart and a smear: durations should
+  // land on beat multiples.
+  const beat = 60 / analysis.bpm;
+  const onGrid = analysis.chords.filter(c => Math.abs(c[2] / beat - Math.round(c[2] / beat)) < 0.12);
+  onGrid.length / analysis.chords.length > 0.8
+    ? ok(`${Math.round(100 * onGrid.length / analysis.chords.length)}% of chords land on the beat grid`)
+    : bad(`only ${onGrid.length}/${analysis.chords.length} chord durations are beat multiples`);
+  /^[A-G][#b]?m?$/.test(analysis.key || '')
+    ? ok(`key detected: ${analysis.key} (drives the sharp/flat spelling)`)
+    : bad('bad key: ' + analysis.key);
+}
+
 const pexec = promisify(execFile);
 for (const stem of ['vocals', 'drums', 'bass', 'other']) {
   const f = join(data, vid, 'stems', `${stem}.m4a`);

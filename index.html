@@ -3763,6 +3763,88 @@ STEMS.forEach(n=>{
 $('stemBtn').addEventListener('click',e=>stemsLoad(e.currentTarget));
 $('stemOffBtn').addEventListener('click',()=>stemsSetOn(false));
 
+/* ================================================================
+   ML CHARTS — the server's chords beat ours, so prefer them
+   The in-browser detector is template matching against a synthetic
+   corpus; the server runs a chord transformer over the separated
+   accompaniment with a real beat tracker. When the server has an
+   answer we use it, and when it doesn't we chart locally NOW and
+   quietly upgrade the chart when the job lands.
+================================================================ */
+function songFromAnalysis(a,vid,title,by){
+  const bpm=a.bpm||120, perBeat=bpm/60;
+  const seq=[]; let at=0;
+  (a.chords||[]).forEach(c=>{
+    const sym=c[0], start=c[1], dur=c[2];
+    // the model can leave silence between segments; the grid has to account for
+    // every beat or everything after the gap drifts early
+    if(start-at>0.05) seq.push(['N.C.',(start-at)*perBeat]);
+    seq.push([sym,dur*perBeat]);
+    at=start+dur;
+  });
+  if(!seq.length) return null;
+  const priorIdx=st.imported.findIndex(s=>s.videoId===vid);
+  const song={
+    id:priorIdx>=0?st.imported[priorIdx].id:'imp'+(++importCount),
+    videoId:vid,
+    title:title||vid,
+    artist:(by?by+' · ':'')+'ML CHART',
+    bpm,sig:[4,4],key:a.key||'C',
+    sections:[['ML CHORDS',seq]],
+  };
+  if(priorIdx>=0) st.imported[priorIdx]=song; else st.imported.push(song);
+  saveImported();
+  renderLibrary();
+  return song;
+}
+async function serverAnalysis(vid){
+  const base=await grabResolve(); if(!base) return null;
+  try{
+    const r=await fetch(base+'/song/'+vid+'/analysis.json',{headers:stemHeaders()});
+    if(!r.ok) return null;
+    const a=await r.json();
+    return (a&&a.chords&&a.chords.length)?a:null;
+  }catch(e){ return null; }
+}
+async function applyServerChart(vid,title,by,a){
+  const song=songFromAnalysis(a,vid,title,by);
+  if(!song) return null;
+  loadSong(song);
+  await ytAttach(vid,title,by);
+  setOffset(0);        // server times are video times, so the grid starts at 0
+  setStatus('✨ ML CHART — '+song.sections[0][1].length+' CHORDS · '+
+            Math.round(song.bpm)+' BPM · KEY '+song.key.toUpperCase()+
+            ' · BEAT-SYNCED');
+  return song;
+}
+/* Fire-and-forget: run the server's full analysis, swap the better chart in when
+   it lands. Silent on every failure — this only ever improves on a chart the
+   user already has. */
+async function upgradeChart(vid,title,by){
+  const base=await grabResolve(); if(!base) return;
+  try{
+    const r=await fetch(base+'/analyze',{
+      method:'POST',
+      headers:{'Content-Type':'application/json',...stemHeaders()},
+      body:JSON.stringify({v:vid})});
+    if(!r.ok) return;                       // no key (Pages copy) or server busy
+    const started=await r.json();
+    if(started.job){
+      for(;;){
+        await new Promise(s=>setTimeout(s,3000));
+        const jr=await fetch(base+'/job/'+started.job,{headers:stemHeaders()});
+        if(!jr.ok) return;
+        const j=await jr.json();
+        if(j.status==='error') return;
+        if(j.status==='done') break;
+      }
+    }
+    if(yt.videoId!==vid) return;            // the user moved on; don't yank the view
+    const a=await serverAnalysis(vid);
+    if(a) await applyServerChart(vid,title,by,a);
+  }catch(e){}
+}
+
 /* iPadOS 13+ reports itself as a Mac, so the touch-points check is load-bearing. */
 function isIOS(){
   const ua=navigator.userAgent||'';
@@ -3783,6 +3865,12 @@ async function autoChartFromVideo(btn){
     loadSong(prior);
     await ytAttach(vid,title,by);
     setStatus('CHART RESTORED — THIS VIDEO WAS ALREADY PROCESSED.');
+    // a locally-detected chart is the weakest one we can show: if the server has
+    // since worked this song out, take its answer instead
+    if(!/ML CHART/.test(prior.artist||'')){
+      const better=await serverAnalysis(vid);
+      if(better) await applyServerChart(vid,title,by,better);
+    }
     return;
   }
   const base=await grabResolve();
@@ -3792,6 +3880,10 @@ async function autoChartFromVideo(btn){
     setStatus('COULDN’T REACH THE AUDIO SERVER — CHECK ⚙ SETTINGS, OR PICK AN AUDIO FILE BELOW.');
     return;
   }
+  // already analysed on the server? that chart beats anything we can compute here
+  btn.textContent='⚙ Checking server…';
+  const ready=await serverAnalysis(vid);
+  if(ready){ await applyServerChart(vid,title,by,ready); return; }
   btn.textContent='⚙ Downloading…';
   // yt-dlp can wedge (a slow extractor, a challenge it can't solve). The deadline
   // must be an IDLE watchdog covering the whole stream, not a one-shot timer: the
@@ -3832,6 +3924,8 @@ async function autoChartFromVideo(btn){
     clearTimeout(gto);
   }
   await chartCurrentVideoFromBytes(ab,p=>{ btn.textContent='⚙ Analyzing… '+Math.round(p*100)+'%'; });
+  // the local chart is up now; ask the server for a better one in the background
+  upgradeChart(vid,title,by);
 }
 $('grabPickBtn').addEventListener('click',()=>$('grabFile').click());
 $('grabFile').addEventListener('change',async e=>{
