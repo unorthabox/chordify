@@ -17,6 +17,7 @@ Ab reads Ab/Db/Eb rather than G#/C#/D#).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import statistics
@@ -29,8 +30,14 @@ RUNNER = HERE / "btc_runner.py"
 WEIGHTS_NAME = "btc_model_large_voca.pt"
 # The ChordMini fork hosts the MIT-licensed checkpoint as a plain file; the
 # original repo's link is a Google Drive interstitial that cannot be curled.
-WEIGHTS_URL = ("https://raw.githubusercontent.com/ptnghia-j/ChordMini/main/"
-               "checkpoints/btc_model_large_voca.pt")
+# PINNED TO A COMMIT, NOT A BRANCH, AND CHECKSUMMED: btc_runner loads this with
+# torch.load(weights_only=False), i.e. it unpickles. A moved branch or a
+# compromised third-party repo would otherwise be arbitrary code execution on
+# this box, on first run, as whoever the service runs as.
+WEIGHTS_COMMIT = "2cc7c740e3b5ea2e0b74bbd314b1c1583e4193d8"
+WEIGHTS_URL = (f"https://raw.githubusercontent.com/ptnghia-j/ChordMini/"
+               f"{WEIGHTS_COMMIT}/checkpoints/btc_model_large_voca.pt")
+WEIGHTS_SHA256 = "1673d23f8f9a55ae7f9e8b80a51da616debb22675b8d8b67ea6ce0ef37b0ab51"
 
 CHORD_MODEL = "BTC-ISMIR19 large-voca"
 BEAT_MODEL = "beat-this final0"
@@ -60,15 +67,30 @@ _FIFTHS = {0: 0, 7: 1, 2: 2, 9: 3, 4: 4, 11: 5, 6: 6,
            1: -5, 8: -4, 3: -3, 10: -2, 5: -1}
 
 
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 def ensure_weights(model_dir: Path) -> Path:
-    """Download the checkpoint once (12MB). Kept out of git with the demucs
-    weights — a clean clone should not carry model binaries."""
+    """Download the checkpoint once (12MB), and refuse anything that isn't byte
+    for byte what we pinned. Kept out of git with the demucs weights — a clean
+    clone should not carry model binaries."""
     model_dir.mkdir(parents=True, exist_ok=True)
     path = model_dir / WEIGHTS_NAME
-    if path.exists() and path.stat().st_size > 1_000_000:
+    if path.exists() and _sha256(path) == WEIGHTS_SHA256:
         return path
     tmp = path.with_suffix(".part")
     urllib.request.urlretrieve(WEIGHTS_URL, tmp)  # noqa: S310 — fixed https URL
+    got = _sha256(tmp)
+    if got != WEIGHTS_SHA256:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"BTC checkpoint checksum mismatch: expected {WEIGHTS_SHA256}, got {got}. "
+            "Refusing to unpickle it.")
     tmp.replace(path)
     return path
 
@@ -139,8 +161,18 @@ def postprocess(raw: dict, duration: float | None) -> dict:
 
     parsed: list[tuple[float, float, int | None, str]] = []
     for start, end, label in raw.get("chords") or []:
-        start = _snap(float(start), beats, tolerance)
-        end = _snap(float(end), beats, tolerance)
+        raw_start, raw_end = float(start), float(end)
+        start = _snap(raw_start, beats, tolerance)
+        end = _snap(raw_end, beats, tolerance)
+        # Both edges snap independently, so a chord sitting between two beats
+        # (1.51 -> 2.49 with beats at 1/2/3) can collapse onto one instant and
+        # vanish from the chart entirely. Give it the NEXT beat instead: keeping
+        # the raw edge would save the chord but drag it off the grid, which is
+        # the whole point of snapping.
+        if end - start <= 0.01:
+            later = [b for b in beats if b > start + 0.01]
+            fallback = start + (60.0 / bpm if bpm else 0.25)
+            end = later[0] if later else max(raw_end, fallback)
         if end - start <= 0.01:
             continue
         got = _parse(label)
@@ -206,14 +238,10 @@ async def _mix_accompaniment(flacs: dict[str, Path], out: Path) -> Path:
     return out
 
 
-async def analyze(source: Path, flacs: dict[str, Path], workdir: Path,
-                  model_dir: Path, gpu_index: int | None,
-                  duration: float | None) -> dict:
-    """Run both models and return the finished chart section of analysis.json."""
-    weights = await asyncio.to_thread(ensure_weights, model_dir)
-    accomp = await _mix_accompaniment(flacs, workdir / "accomp.wav")
-    full = await _decode_wav(source, workdir / "beats.wav")
-
+async def _infer(source: Path, flacs: dict[str, Path], accomp: Path, full: Path,
+                 weights: Path, gpu_index: int | None):
+    await _mix_accompaniment(flacs, accomp)
+    await _decode_wav(source, full)
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = "" if gpu_index is None else str(gpu_index)
     env["PYTHONIOENCODING"] = "utf-8"
@@ -221,8 +249,23 @@ async def analyze(source: Path, flacs: dict[str, Path], workdir: Path,
         sys.executable, str(RUNNER), str(accomp), str(full), str(weights),
         env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, err = await proc.communicate()
-    accomp.unlink(missing_ok=True)
-    full.unlink(missing_ok=True)
+    return out, err, proc
+
+
+async def analyze(source: Path, flacs: dict[str, Path], workdir: Path,
+                  model_dir: Path, gpu_index: int | None,
+                  duration: float | None) -> dict:
+    """Run both models and return the finished chart section of analysis.json."""
+    weights = await asyncio.to_thread(ensure_weights, model_dir)
+    accomp, full = workdir / "accomp.wav", workdir / "beats.wav"
+    try:
+        out, err, proc = await _infer(source, flacs, accomp, full, weights, gpu_index)
+    finally:
+        # these are full-length uncompressed WAVs; a raise between the two decodes
+        # would otherwise leave one behind in the song dir, and jobs.py swallows
+        # the exception so nothing would ever clean it up
+        accomp.unlink(missing_ok=True)
+        full.unlink(missing_ok=True)
     if proc.returncode != 0:
         tail = (err or b"").decode(errors="replace").strip()[-800:]
         raise RuntimeError(f"chord/beat inference failed (exit {proc.returncode}): {tail}")

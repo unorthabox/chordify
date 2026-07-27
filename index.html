@@ -3266,7 +3266,11 @@ async function ytAttach(videoId,title,by){
       videoId,
       playerVars:{rel:0,modestbranding:1,playsinline:1},
       events:{
-        onReady:()=>{ if(yt.player.setPlaybackRate) yt.player.setPlaybackRate(st.tempoMult); },
+        onReady:()=>{
+          if(yt.player.setPlaybackRate) yt.player.setPlaybackRate(st.tempoMult);
+          // stems were live before this player replaced the old one — re-mute it
+          if(stemState.wanted&&stemState.buffers&&stemState.vid===yt.videoId) stemsSetOn(true);
+        },
         onStateChange:e=>{
           const S=window.YT.PlayerState;
           if(e.data===S.PLAYING){ st.playing=true; $('playBtn').textContent='❚❚ HOLD'; $('sigLed').className='led on-amber blink'; }
@@ -3305,6 +3309,7 @@ async function waitForDuration(vid,maxMs){
   }
 }
 function ytDetach(silent){
+  stemsSuspend();   // the iframe we muted is about to stop existing
   if(yt.player&&yt.player.destroy){ try{yt.player.destroy();}catch(e){} }
   yt.player=null; yt.videoId=null;
   const host=$('ytPlayer');
@@ -3588,7 +3593,8 @@ async function chartCurrentVideoFromBytes(ab,onProgress){
    from GitHub Pages it stays null and the app falls back to a remembered key. */
 window.CFY_KEY=null;/*CFY_KEY*/
 const STEMS=['vocals','drums','bass','other'];
-const stemState={vid:null,buffers:null,srcs:[],on:false,t0:0,v0:0,rate:1,loading:false,timer:null};
+const stemState={vid:null,buffers:null,srcs:[],on:false,wanted:false,
+                 t0:0,v0:0,rate:1,loading:false,timer:null};
 let stemGains=null;
 
 /* The v2 endpoints need the server's key. The server injects it into the copy
@@ -3665,14 +3671,39 @@ function stemsSync(force){
   if(!stemState.on||!stemState.buffers) return;
   const p=yt.player;
   if(!p||!p.getCurrentTime||!st.playing){ if(!st.playing) stemsStop(); return; }
-  const v=p.getCurrentTime();
   const rate=(p.getPlaybackRate?p.getPlaybackRate():1)||1;
+  // Varispeed and stems can't both be right yet: YouTube's rate change preserves
+  // pitch, but AudioBufferSourceNode.playbackRate resamples, so at 75% the stems
+  // would sit ~5 semitones under the chart you're reading. Hand the audio back
+  // to the video rather than play the song in the wrong key.
+  if(Math.abs(rate-1)>0.01){
+    stemsSetOn(false);
+    setStatus('STEMS ARE FULL-SPEED ONLY — VIDEO AUDIO RESTORED FOR VARISPEED.');
+    return;
+  }
+  const v=p.getCurrentTime();
+  // past the end of the stems there is nothing to anchor; without this the sync
+  // interval would rebuild empty source sets every 400ms forever.
+  const end=Math.min(...STEMS.map(n=>stemState.buffers[n]?stemState.buffers[n].duration:0));
+  if(v>=end){ stemsStop(); return; }
   if(force||!stemState.srcs.length||rate!==stemState.rate||Math.abs(v-stemsExpected())>0.25)
     stemsStartAt(v);
+}
+/* Detaching the player destroys the iframe we muted. Keep the decoded buffers
+   (they cost a minute of GPU) but stop everything, and remember that stems were
+   wanted so re-attaching the same video can turn them back on — otherwise the
+   fresh, UNMUTED player plays the original song over the stems and no fader can
+   silence it. */
+function stemsSuspend(){
+  if(stemState.timer){ clearInterval(stemState.timer); stemState.timer=null; }
+  stemsStop();
+  stemState.on=false;
+  $('mixMod').classList.remove('stems');
 }
 function stemsSetOn(on){
   const want=!!on&&!!stemState.buffers;
   stemState.on=want;
+  stemState.wanted=want;
   $('mixMod').classList.toggle('stems',want);
   const p=yt.player;
   try{ if(p&&p.mute){ if(want) p.mute(); else p.unMute(); } }catch(e){}
@@ -3691,7 +3722,7 @@ function stemsSetOn(on){
 async function stemsLoad(btn){
   const vid=yt.videoId;
   if(!vid){ setStatus('ATTACH A VIDEO FIRST — SEARCH, THEN TAP A RESULT.'); return; }
-  if(stemState.loading) return;
+  if(stemState.loading){ setStatus('ALREADY SEPARATING — ONE SONG AT A TIME.'); return; }
   if(stemState.buffers&&stemState.vid===vid){ stemsSetOn(true); return; }
   stemState.loading=true;
   const label=btn?btn.textContent:'';
@@ -3742,6 +3773,12 @@ async function stemsLoad(btn){
       // may still be on its way into OPFS.
       decoded[n]=await ctx.decodeAudioData(raw[n].slice(0));
     }
+    // Separation takes a minute; the user may well have moved on. Applying these
+    // now would mute the NEW video and play the OLD song's stems under it.
+    if(yt.videoId!==vid){
+      setStatus('STEMS READY FOR THE PREVIOUS SONG — RE-ATTACH IT TO USE THEM.');
+      return;
+    }
     stemState.vid=vid; stemState.buffers=decoded;
     stemsSetOn(true);
   }catch(e){
@@ -3754,6 +3791,7 @@ async function stemsLoad(btn){
 /* A different video means the loaded stems are the wrong song. */
 function stemsForget(){
   if(stemState.on) stemsSetOn(false);
+  stemState.wanted=false;
   stemState.vid=null; stemState.buffers=null;
 }
 STEMS.forEach(n=>{
@@ -3817,9 +3855,13 @@ async function applyServerChart(vid,title,by,a){
             ' · BEAT-SYNCED');
   return song;
 }
-/* Fire-and-forget: run the server's full analysis, swap the better chart in when
-   it lands. Silent on every failure — this only ever improves on a chart the
-   user already has. */
+/* Fire-and-forget: run the server's full analysis in the background, then OFFER
+   it. It deliberately does not apply itself. Applying means reloading the song
+   and re-attaching the video, which restarts playback from zero, resets the sync
+   offset and discards any BPM the user dialled in — fine when they just asked
+   for a chart, hostile a minute into practising. Tapping ⚙ Process Song takes
+   the server's chart (that path checks the server first), so the offer costs no
+   new UI. Silent on every failure. */
 async function upgradeChart(vid,title,by){
   const base=await grabResolve(); if(!base) return;
   try{
@@ -3839,9 +3881,10 @@ async function upgradeChart(vid,title,by){
         if(j.status==='done') break;
       }
     }
-    if(yt.videoId!==vid) return;            // the user moved on; don't yank the view
     const a=await serverAnalysis(vid);
-    if(a) await applyServerChart(vid,title,by,a);
+    if(a&&yt.videoId===vid)                 // re-check AFTER the fetch, not before
+      setStatus('✨ A BETTER CHART IS READY ('+(a.chords.length)+' CHORDS, KEY '+
+                String(a.key||'?').toUpperCase()+') — TAP ⚙ PROCESS SONG TO USE IT.');
   }catch(e){}
 }
 

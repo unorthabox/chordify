@@ -105,6 +105,18 @@ shell.ok && shellHtml.includes('GRAB_DEFAULTS')
 shellHtml.includes(`window.CFY_KEY=${JSON.stringify(KEY)};`)
   ? ok('/ injects the API key into the shell (stems work with zero setup)')
   : bad('served shell did not get the injected CFY_KEY');
+// CORS is `*`, so without an Origin gate ANY page open in a browser on the
+// tailnet could fetch this URL, read the body, and scrape the key.
+const crossOrigin = await fetch(`${BASE}/`, { headers: { Origin: 'https://evil.example' } });
+const crossHtml = crossOrigin.ok ? await crossOrigin.text() : '';
+!crossHtml.includes(KEY) && crossHtml.includes('window.CFY_KEY=null')
+  ? ok('a cross-origin fetch of the shell gets NO key')
+  : bad('cross-origin fetch scraped the API key out of the shell');
+const idxRes = await fetch(`${BASE}/index.html`);
+const idxHtml = idxRes.ok ? await idxRes.text() : '';
+idxHtml.includes(`window.CFY_KEY=${JSON.stringify(KEY)};`)
+  ? ok('/index.html gets the key too (sw.js precaches both paths)')
+  : bad('/index.html served without the injected key');
 const swRes = await fetch(`${BASE}/sw.js`);
 swRes.ok && (swRes.headers.get('content-type') || '').includes('javascript')
   ? ok('/sw.js served as javascript (service worker can register)')
@@ -170,8 +182,11 @@ if (analysis.chord_error) {
   // Beat-snapping is the difference between a chart and a smear: durations should
   // land on beat multiples.
   const beat = 60 / analysis.bpm;
+  // Floor is 0.88, measured at 0.94. Rescuing a collapsed chord by keeping its
+  // RAW end (rather than giving it the next beat) drops this to 0.83 — the fix
+  // that saves the chord must not be the fix that unsnaps the chart.
   const onGrid = analysis.chords.filter(c => Math.abs(c[2] / beat - Math.round(c[2] / beat)) < 0.12);
-  onGrid.length / analysis.chords.length > 0.8
+  onGrid.length / analysis.chords.length > 0.88
     ? ok(`${Math.round(100 * onGrid.length / analysis.chords.length)}% of chords land on the beat grid`)
     : bad(`only ${onGrid.length}/${analysis.chords.length} chord durations are beat multiples`);
   /^[A-G][#b]?m?$/.test(analysis.key || '')

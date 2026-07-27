@@ -64,6 +64,10 @@ class JobManager:
             got = json.loads((d / "analysis.json").read_text())
         except (OSError, json.JSONDecodeError):
             return False
+        if got.get("chord_error"):
+            # A transient failure (a GPU busy with an LLM, say) must not pin this
+            # song to a stem-only result for good. Re-run and it gets its chart.
+            return False
         return got.get("analysis_version", 0) >= ANALYSIS_VERSION
 
     def submit(self, vid: str) -> tuple[Job | None, bool]:

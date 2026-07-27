@@ -36,7 +36,8 @@ from .pipeline.grab import FORMAT, find_ytdlp, ytdlp_version
 
 ROOT = Path(__file__).resolve().parent.parent  # server/
 DATA = Path(os.environ.get("CHORDIFY_DATA", ROOT / "data"))
-VID_RE = re.compile(r"^[\w-]{11}$")
+VID_RE = re.compile(r"^[\w-]{11}$", re.ASCII)  # ASCII: \w is unicode-aware by
+#                                                default, and these become paths
 
 
 def _load_key() -> str:
@@ -173,22 +174,49 @@ SHELL_FILES = {
 _NO_CACHE = {"Cache-Control": "no-cache"}  # the service worker does its own caching
 
 
-@app.get("/")
-async def shell_index():
-    """Serve the app with the API key injected.
+def _is_navigation(req: Request) -> bool:
+    """True when this looks like the browser loading the app, not a script on
+    some other page fetching it.
 
-    Reaching this endpoint already means reaching a tailnet-only server — the
-    same bar as /grab, which is keyless — so handing the page its key here adds
-    no exposure, and saves every device from typing one.
+    This gate matters because CORS here is `*`: without it, ANY page open in a
+    browser on the tailnet could fetch('https://thing3…/') , read the body
+    through that permissive header, and scrape the injected key — the victim's
+    own browser doing the "reaching the server" the key model assumes only the
+    owner can do. Browsers omit Origin on top-level GET navigations and on
+    same-origin GETs (the service worker precaching './'), and always send it on
+    a cross-origin fetch, so this cleanly separates the two.
+    """
+    origin = req.headers.get("origin")
+    if not origin:
+        return True
+    host = (req.headers.get("host") or "").lower()
+    return origin.split("://", 1)[-1].lower().rstrip("/") == host
+
+
+@app.get("/")
+async def shell_index(req: Request):
+    """Serve the app, with the API key injected for real navigations.
+
+    Loading this page in a browser already means reaching a tailnet-only server
+    — the same bar as /grab, which is keyless — so handing the page its key
+    saves every device from typing one.
     """
     html = (SITE / "index.html").read_text(encoding="utf-8")
-    html = html.replace("window.CFY_KEY=null;/*CFY_KEY*/",
-                        f'window.CFY_KEY={json.dumps(KEY)};/*CFY_KEY*/', 1)
+    if _is_navigation(req):
+        # json.dumps handles quotes and backslashes; "<" is escaped separately
+        # so a hand-set key containing "</script>" can't break out of the tag.
+        literal = json.dumps(KEY).replace("<", "\\u003c")
+        html = html.replace("window.CFY_KEY=null;/*CFY_KEY*/",
+                            f"window.CFY_KEY={literal};/*CFY_KEY*/", 1)
     return HTMLResponse(html, headers=_NO_CACHE)
 
 
 @app.get("/{name}")
-async def shell_file(name: str):
+async def shell_file(req: Request, name: str):
     if name not in SHELL_FILES:
         raise HTTPException(404, "not found")
+    if name == "index.html":
+        # sw.js precaches both './' and './index.html'; a device whose first hit
+        # is this path would otherwise get a shell with no key.
+        return await shell_index(req)
     return FileResponse(SITE / name, media_type=SHELL_FILES[name], headers=_NO_CACHE)
